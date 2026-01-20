@@ -1,0 +1,338 @@
+---
+title: "Results - 11/18/2025"
+format:
+  html:
+    page-layout: full
+    # optional: keep text from getting too wide
+    # css: styles.css
+    code-overflow: scroll
+    number-sections: true
+    self-contained: true
+editor: source
+execute: 
+  warning: false
+  echo: false
+---
+
+
+```{r}
+rm(list=ls())
+library(data.table)
+library(fixest)
+library(DescTools)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(readxl)
+library(stringr)
+
+source('https://raw.githubusercontent.com/dratnadiwakara/r-utilities/refs/heads/main/summary_stat_tables.R')
+```
+
+
+```{r}
+dt <- readRDS("C:/data/branch_competition_panel.rds")
+setDT(dt)
+
+
+
+# Ensure sophistication is 0/1 (drop NAs or keep with 0/1+NA dummies)
+# dt <- dt[!is.na(sophisticated_ed_sm)]
+# dt[, sophisticated_ed_sm := as.integer(sophisticated_ed_sm == 1L)]
+
+setorder(dt,UNINUMBR,YEAR)
+dt[, close_flag := own_closures_zip]
+dt[, open_flag := own_openings_zip]
+
+# 2) Previous 1–3 and next 1–3 years (by row within bank–ZIP)
+dt[, `:=`(
+  close_l1 = shift(close_flag, 1, type = "lag"),
+  close_l2 = shift(close_flag, 2, type = "lag"),
+  close_l3 = shift(close_flag, 3, type = "lag"),
+  close_f1 = shift(close_flag, 1, type = "lead"),
+  close_f2 = shift(close_flag, 2, type = "lead"),
+  close_f3 = shift(close_flag, 3, type = "lead"),
+  open_l1 = shift(open_flag, 1, type = "lag"),
+  open_l2 = shift(open_flag, 2, type = "lag"),
+  open_l3 = shift(open_flag, 3, type = "lag"),
+  open_f1 = shift(open_flag, 1, type = "lead"),
+  open_f2 = shift(open_flag, 2, type = "lead"),
+  open_f3 = shift(open_flag, 3, type = "lead")
+), by = .(UNINUMBR)]
+
+
+dt[,competitor_closures_rate:=Winsorize(competitor_closures_rate, val = quantile(competitor_closures_rate, probs = c(0.01, 0.99), na.rm = T))]
+dt[,competitor_close_dep_share_prev:=Winsorize(competitor_close_dep_share_prev, val = quantile(competitor_close_dep_share_prev, probs = c(0.01, 0.99), na.rm = T))]
+dt[,competitor_openings_rate:=Winsorize(competitor_openings_rate, val = quantile(competitor_openings_rate, probs = c(0.01, 0.99), na.rm = T))]
+
+dt[,zip_yr:=paste(ZIPBR,YEAR)]
+
+dt[,county:=str_pad(STCNTY,5,"left","0")]
+dt[,county_yr:=paste(county,YEAR)]
+dt[,bank_yr:=paste(RSSDID,YEAR)]
+
+gc()
+```
+
+```{r}
+# 8. Zip code level characteristics -----------------------
+
+library(readxl)
+library(stringr)
+
+acs_data <- readRDS("C:/data/acs_data_2010_2022_tract.rds")
+
+tract_zip_crosswalk <- read_excel('C:/data/ZIP_TRACT_122019.xlsx')
+tract_zip_crosswalk <- data.table(tract_zip_crosswalk)
+tract_zip_crosswalk[,zip:=str_pad(ZIP,5,"left","0")]
+tract_zip_crosswalk[,tract:=as.character(TRACT)]
+tract_zip_crosswalk[,tract:=str_pad(tract,11,"left","0")]
+tract_zip_crosswalk[,tot_ratio:=TOT_RATIO]
+
+
+acs_with_zip <- acs_data %>%
+  left_join(tract_zip_crosswalk[,c("zip","tract","tot_ratio")], by = c("tract" = "tract"))
+
+
+
+zip_aggregated_data <- acs_with_zip %>%
+  group_by(zip,yr) %>%
+  summarize(
+    # Weighted average of median income
+    median_income = sum(median_income * tot_ratio, na.rm = T) ,
+    
+    # Weighted average of percentage of population with a bachelor's degree
+    pct_college_educated = sum(pct_college_educated * tot_ratio, na.rm=T),
+    
+    # Weighted average of white population percentage
+    # white_population_pct = sum(white_populationE * RES_RATIO,na.rm=T),
+    
+    # Weighted average of median age
+    median_age = sum(median_age * tot_ratio,na.rm = T)
+    
+    # Total population is weighted by RES_RATIO
+    # total_population = sum(total_populationE * RES_RATIO)
+  )
+
+zip_aggregated_data <- data.table(zip_aggregated_data)
+
+irs_data <- readRDS("C:/data/irs_data_2010_2022_zip.rds")
+
+
+irs_data <- irs_data[,c("zipcode","yr","dividend_frac","capital_gain_frac")]
+irs_data[,zipcode:=str_pad(zipcode,5,"left","0")]
+# 
+zip_demo_data <- merge(zip_aggregated_data,irs_data,by.x=c("zip","yr"),by.y=c("zipcode","yr"),all.x=T)
+
+
+key_chars <- c("median_income","median_age","pct_college_educated","capital_gain_frac","dividend_frac")
+
+zip_demo_data <- data.table(zip_demo_data)
+zip_demo_data[,paste0(key_chars,"_q"):=lapply(.SD, function(x) ntile(x,2)),by=yr,.SDcols = key_chars]
+
+zip_demo_data[,sophisticated_ed_sm:=ifelse(!is.na(dividend_frac)  & pct_college_educated_q==2 & (dividend_frac_q==2 | capital_gain_frac_q==2),1,
+                                           ifelse(!is.na(dividend_frac),0,NA))]
+
+
+zip_demo_data <- zip_demo_data[,c("zip","yr","median_income","median_age","pct_college_educated","capital_gain_frac","dividend_frac","sophisticated_ed_sm")]
+
+zip_demo_data[,age_bin:=ntile(median_age,4),by=yr]
+
+temp1 <- zip_demo_data[yr==2010]
+for(y in 2000:2009) {
+  temp <- copy(temp1)
+  temp[,yr:=y]
+  zip_demo_data <- rbind(zip_demo_data,temp)
+}
+
+temp1 <- zip_demo_data[yr==2022]
+for(y in 2023:2024) {
+  temp <- copy(temp1)
+  temp[,yr:=y]
+  zip_demo_data <- rbind(zip_demo_data,temp)
+}
+
+temp1 <- zip_demo_data[yr==2010]
+for(y in 2011:2012) {
+  temp <- copy(temp1)
+  temp[,yr:=y]
+  zip_demo_data <- rbind(zip_demo_data,temp)
+}
+
+temp1 <- zip_demo_data[yr==2013]
+for(y in 2014:2015) {
+  temp <- copy(temp1)
+  temp[,yr:=y]
+  zip_demo_data <- rbind(zip_demo_data,temp)
+}
+
+temp1 <- zip_demo_data[yr==2019]
+for(y in 2020:2021) {
+  temp <- copy(temp1)
+  temp[,yr:=y]
+  zip_demo_data <- rbind(zip_demo_data,temp)
+}
+
+
+dt <- merge(dt,
+            zip_demo_data[!is.na(zip),.(zip,yr,sophisticated_ed_sm,age_bin,median_age,median_income,
+                                        pct_college_educated,capital_gain_frac,dividend_frac)],
+            by.x=c("ZIPBR","YEAR"),
+            by.y=c("zip","yr"),
+            all.x=T)
+
+dt <- dt[!is.na(sophisticated_ed_sm)]
+dt[, sophisticated_ed_sm := as.integer(sophisticated_ed_sm == 1L)]
+dt[, factor_age_bin := factor(age_bin)]
+dt[, log_income := log1p(median_income)]
+
+
+```
+
+
+```{r}
+
+
+dt_1yr_prev_3yr_filter <- dt[own_closures_zip == 0 & close_l1==0 & close_l2==0 & close_l3==0 &
+                             own_openings_zip == 0 & open_l1==0 & open_l2==0 & open_l3==0  &
+                             dep_gr_1yr < 1 & is.finite(dep_gr_1yr)]
+
+dt_3yr <- dt[own_closures_zip == 0 & own_openings_zip == 0 & dep_gr_3yr < 1 & is.finite(dep_gr_3yr)]
+
+dt_1yr <- dt[own_closures_zip == 0 & own_openings_zip == 0 & dep_gr_1yr < 1 & is.finite(dep_gr_1yr)]
+```
+
+
+# Descriptive Stats
+
+## Dependent Variable: (Deposits$_{t+1}$ - Deposits$_{t}$)/Deposits$_{t}$
+
+```{r}
+ggplot(dt_1yr[YEAR>2001 & YEAR<=2024],aes(x=dep_gr_1yr))+geom_histogram()+facet_wrap(~YEAR)+theme_minimal()
+```
+
+
+## Key RHS Variables 
+
+### 2002:2006
+```{r}
+g1 <- ggplot(dt_1yr[YEAR %in% 2002:2006],aes(x=competitor_closures_rate))+geom_histogram()+ggtitle("Closure no share (ZIP, rate)")+theme_minimal()
+g2 <- ggplot(dt_1yr[YEAR %in% 2002:2006],aes(x=competitor_close_dep_share_prev))+geom_histogram()+ggtitle("Closure deposit share (t−1)")+theme_minimal()
+grid.arrange(g1,g2,nrow=1)
+```
+
+
+### 2015:2019
+```{r}
+g1 <- ggplot(dt_1yr[YEAR %in% 2015:2019],aes(x=competitor_closures_rate))+geom_histogram()+ggtitle("closure no share (ZIP, rate)")+theme_minimal()
+g2 <- ggplot(dt_1yr[YEAR %in% 2015:2019],aes(x=competitor_close_dep_share_prev))+geom_histogram()+ggtitle("closure deposit share (t−1)")+theme_minimal()
+grid.arrange(g1,g2,nrow=1)
+```
+
+
+## Summary Stats - 2019
+```{r}
+temp <- summary_stats_function(dt_1yr[YEAR==2019],
+                               c("competitor_closures_rate",
+                                 "competitor_close_dep_share_prev",
+                                 "dep_gr_3yr",
+                                 "dep_gr_1yr",
+                                 "sophisticated_ed_sm",
+                                 "median_income",
+                                 "log_income",
+                                 "median_age",
+                                 "pct_college_educated",
+                                 "dividend_frac"))
+
+md_table(temp)
+```
+## No of branches per zip code 2019
+```{r}
+temp <- dt_1yr[YEAR==2019,.(ZIPBR)]
+temp <- temp[,.N,by=ZIPBR]
+temp[,N:=pmax(pmin(N, 25), 1)]
+hist(temp$N)
+```
+
+```{r}
+setFixest_fml(
+  ..fixef_br_ctyyr     = ~ UNINUMBR + county_yr,
+  ..fixef_ctyyr_bnkyr    = ~ county_yr + bank_yr,
+  ..fixef_br_ctyyr_bnkyr    = ~ UNINUMBR+county_yr + bank_yr,
+  ..vcov      = ~ UNINUMBR,
+  ..fml_baseline_no = ~competitor_closures_rate +  log1p(DEPSUMBR) ,
+  ..fml_baseline_amt = ~competitor_close_dep_share_prev+ +  log1p(DEPSUMBR),
+  ..fml_interaction_amt = ~competitor_close_dep_share_prev*sophisticated_ed_sm + log1p(DEPSUMBR),
+  ..fml_interactions_amt = ~competitor_close_dep_share_prev*sophisticated_ed_sm +competitor_close_dep_share_prev*log_income+ competitor_close_dep_share_prev*factor_age_bin + log1p(DEPSUMBR)
+)
+
+dict <- c(
+  dep_gr_3yr                        = "Dep gr(t to t+3)",
+  dep_gr_1yr                        = "Dep gr(t to t+1)",
+  competitor_closures_rate      = "Competitor closure no share (ZIP, rate)",
+  log_income      = "log(Zip Income)",
+  factor_age_bin = "Zip age quartile",
+  factor_age_bin2 = "Zip age Q2",
+  factor_age_bin3 = "Zip age Q3",
+  factor_age_bin4 = "Zip age Q4",
+  competitor_close_dep_share_prev = "Competitor closure deposit share (t−1)",
+  sophisticated_ed_sm           = "Sophisticated ZIP",
+  "log1p(DEPSUMBR)"                = "log(Deposits)"
+)
+
+
+setFixest_etable(
+  dict        = dict,
+  se.below    = TRUE
+)
+```
+
+
+
+# Baseline
+```{r}
+reg_list <- list()
+
+reg_list[[1]] <- feols(dep_gr_1yr ~ ..fml_baseline_amt|..fixef_br_ctyyr, data = dt_1yr)
+
+reg_list[[2]]  <- feols(dep_gr_1yr ~ ..fml_baseline_amt|..fixef_ctyyr_bnkyr, data = dt_1yr,vcov = ~ UNINUMBR) 
+
+reg_list[[3]] <- feols(dep_gr_1yr ~ ..fml_baseline_amt|..fixef_br_ctyyr_bnkyr, data = dt_1yr) 
+
+reg_list[[4]] <- feols(dep_gr_1yr ~ ..fml_baseline_no|..fixef_br_ctyyr,data = dt_1yr)
+
+reg_list[[5]] <- feols(dep_gr_1yr ~ ..fml_baseline_amt|..fixef_br_ctyyr,data = dt_1yr_prev_3yr_filter)
+
+reg_list[[6]] <- feols(dep_gr_3yr ~ ..fml_baseline_amt|..fixef_br_ctyyr, data = dt_3yr)
+
+md_table(etable(reg_list,signif.code =  c("***"=0.01, "**"=0.05, "*"=0.10),
+         headers= c(rep("Full Sample",4),"less -3yr chg","DV: t+3")))
+```
+
+# Zip Demographic Interactions
+
+```{r}
+reg_list <- list()
+
+reg_list[[1]] <- feols(dep_gr_1yr ~ ..fml_interaction_amt|..fixef_br_ctyyr,data = dt_1yr)
+reg_list[[2]] <- feols(dep_gr_1yr ~ ..fml_interactions_amt|..fixef_br_ctyyr,data = dt_1yr)
+reg_list[[3]] <- feols(dep_gr_1yr ~ ..fml_interactions_amt|..fixef_ctyyr_bnkyr,data = dt_1yr,vcov = ~ UNINUMBR)
+reg_list[[4]] <- feols(dep_gr_1yr ~ ..fml_interactions_amt|..fixef_br_ctyyr_bnkyr,data = dt_1yr)
+
+md_table(etable(reg_list,signif.code =  c("***"=0.01, "**"=0.05, "*"=0.10)))
+```
+
+# Split by  Time
+
+```{r}
+reg_list <- list()
+
+reg_list[[1]] <- feols(dep_gr_1yr ~ ..fml_interactions_amt|..fixef_ctyyr_bnkyr,data = dt_1yr[YEAR %in% 2000:2007],vcov = ~ UNINUMBR)
+reg_list[[2]] <- feols(dep_gr_1yr ~ ..fml_interactions_amt|..fixef_ctyyr_bnkyr,data = dt_1yr[YEAR %in% 2008:2011],vcov = ~ UNINUMBR)
+reg_list[[3]] <- feols(dep_gr_1yr ~ ..fml_interactions_amt|..fixef_ctyyr_bnkyr,data = dt_1yr[YEAR %in% 2012:2019],vcov = ~ UNINUMBR)
+reg_list[[4]] <- feols(dep_gr_1yr ~ ..fml_interactions_amt|..fixef_ctyyr_bnkyr,data = dt_1yr[YEAR %in% 2020:2024],vcov = ~ UNINUMBR)
+
+
+md_table(etable(reg_list,signif.code =  c("***"=0.01, "**"=0.05, "*"=0.10),
+                headers= c("2000:2007","2008:2011","2012:2019","2020:2024")))
+```

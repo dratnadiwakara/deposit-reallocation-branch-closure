@@ -1,0 +1,290 @@
+---
+title: "Branch-Level Analysis: App Quality and Deposit Reallocation"
+author: "Generated Output"
+format:
+  html:
+    self-contained: true
+    code-overflow: scroll
+    toc: true
+execute:
+  warning: false
+  echo: true
+---
+
+This document analyzes branch-level deposit growth following closures by other banks,
+with a focus on how app quality affects deposit reallocation. The analysis uses the
+branch panel created by `build_incumbent_branch_panel.R`.
+
+# Setup
+
+```{r}
+#| warning: false
+#| messages: false
+
+# -----------------------------------------------------------------------------
+# SETUP
+# -----------------------------------------------------------------------------
+rm(list=ls())
+library(data.table)
+library(fixest)
+library(DescTools)
+
+# Path must match the output of build_incumbent_branch_panel.R
+panel_path <- "C:/OneDrive/data/deposit_reallocatoin_branch_panel.rds"
+dt <- readRDS(panel_path)
+setDT(dt)
+
+# Initial sample restrictions
+dt <- dt[branches_county_lag1 >= 3 & 
+         YEAR <= 2021 & 
+         incumbent_mkt_share_lag1_all > 0.2 &
+         !is.na(gr_branch)]
+
+# Create total closure share for comparison
+dt[, share_deps_closed_total := share_deps_closed_bin0 + 
+                                  share_deps_closed_bin1 + 
+                                  share_deps_closed_bin2 + 
+                                  share_deps_closed_bin3 + 
+                                  share_deps_closed_bin4]
+
+# Winsorize outcome and controls at 2.5%/97.5% by year
+winsor_vars <- c("gr_branch", "county_dep_growth_t4_t1")
+
+dt[, (winsor_vars) := lapply(.SD, function(x) {
+  if (sum(!is.na(x)) > 0) {
+    Winsorize(x, val = quantile(x, probs = c(0.025, 0.975), na.rm = TRUE))
+  } else {
+    x 
+  }
+}), by = YEAR, .SDcols = winsor_vars]
+
+# Create app quality categories for the branch's own bank
+dt[, own_bank_high_app := fifelse(app_rating_bin >= 3, 1L, 0L)]
+dt[, own_bank_has_app := fifelse(app_rating_bin > 0, 1L, 0L)]
+
+```
+
+# Summary Statistics
+
+```{r}
+#| warning: false
+#| messages: false
+
+# Sample characteristics
+cat("Sample size:", nrow(dt), "branch-year observations\n")
+cat("Unique branches:", uniqueN(dt$UNINUMBR), "\n")
+cat("Unique banks:", uniqueN(dt$RSSDID), "\n")
+cat("Years:", min(dt$YEAR), "to", max(dt$YEAR), "\n\n")
+
+# App rating distribution
+cat("App Rating Distribution (branch's own bank):\n")
+print(dt[, .N, by = app_rating_bin][order(app_rating_bin)])
+
+cat("\n")
+cat("Mean branch growth:", round(mean(dt$gr_branch, na.rm = TRUE), 4), "\n")
+cat("Mean total closure share:", round(mean(dt$share_deps_closed_total, na.rm = TRUE), 4), "\n")
+
+```
+
+# Analysis
+
+## 1. Baseline: Closure Effects by App Quality of Closers
+
+Test whether closures by high-app vs low-app banks have different effects.
+
+```{r}
+#| warning: false
+#| messages: false
+
+# Define formulas
+setFixest_fml(
+  ..fixef_branch = ~ UNINUMBR + state_yr,
+  ..controls = ~ log1p(branches_county_lag1) + 
+                 county_dep_growth_t4_t1 + 
+                 log1p(deps_lag1) + 
+                 incumbent_mkt_share_lag1_all
+)
+
+r <- list()
+
+# Model 1: Aggregate closure effect (baseline)
+r[[1]] <- feols(gr_branch ~ share_deps_closed_total + ..controls | ..fixef_branch, 
+                data = dt[incumbent_bank == 1 & closer_has_remaining==0 & YEAR>=2012])
+
+# Model 2: Split by app rating of closers (bins 1-4, bin 0 is omitted/no app)
+r[[2]] <- feols(gr_branch ~ share_deps_closed_bin1 + 
+                            share_deps_closed_bin2 + 
+                            share_deps_closed_bin3 + 
+                            share_deps_closed_bin4 + 
+                            ..controls | ..fixef_branch, 
+                data = dt[incumbent_bank == 1 & closer_has_remaining==0 & YEAR>=2012])
+
+# Model 3: Group into high-app (bins 3-4) vs low-app (bins 1-2) vs no-app (bin 0)
+dt[, share_deps_closed_high_app := share_deps_closed_bin3 + share_deps_closed_bin4]
+dt[, share_deps_closed_low_app := share_deps_closed_bin1 + share_deps_closed_bin2]
+
+r[[3]] <- feols(gr_branch ~ share_deps_closed_low_app +
+                            share_deps_closed_high_app +
+                            ..controls | ..fixef_branch,
+                data = dt[incumbent_bank == 1 & closer_has_remaining==0  & YEAR>=2012])
+
+etable(r, 
+       signif.code = c("***" = 0.01, "**" = 0.05, "*" = 0.10),
+       headers = c("Total Closures", "By App Bin", "High vs Low App"))
+
+```
+
+## 2. Interaction: Does Branch's Own App Quality Matter?
+
+Test whether branches owned by high-app banks capture more deposits following closures.
+
+```{r}
+#| warning: false
+#| messages: false
+
+gc()
+
+r <- list()
+
+# Model 1: Interaction with own bank has app (any rating)
+r[[1]] <- feols(gr_branch ~ share_deps_closed_total * own_bank_has_app + 
+                            ..controls | ..fixef_branch, 
+                data = dt[incumbent_bank == 1 & closer_has_remaining==0  & YEAR>=2012])
+
+# Model 2: Interaction with own bank has HIGH app (bins 3-4)
+r[[2]] <- feols(gr_branch ~ share_deps_closed_total * own_bank_high_app + 
+                            ..controls | ..fixef_branch, 
+                data = dt[incumbent_bank == 1 & closer_has_remaining==0  & YEAR>=2012])
+
+# # Model 3: Triple interaction - closure app quality × own bank app quality
+# r[[3]] <- feols(gr_branch ~ (share_deps_closed_low_app + share_deps_closed_high_app) * own_bank_high_app + 
+#                             share_deps_closed_bin0 +
+#                             ..controls | ..fixef_branch, 
+#                 data = dt)
+
+etable(r, 
+       signif.code = c("***" = 0.01, "**" = 0.05, "*" = 0.10),
+       headers = c("Has App", "High App"))
+
+```
+
+## 3. Incumbent vs Closer Bank Branches
+
+Test whether effects differ for branches of incumbent vs closer banks.
+
+```{r}
+#| warning: false
+#| messages: false
+
+r <- list()
+
+# Model 1: Main effect for incumbent branches only
+r[[1]] <- feols(gr_branch ~ share_deps_closed_high_app + 
+                            share_deps_closed_low_app +
+                            share_deps_closed_bin0 +
+                            ..controls | ..fixef_branch, 
+                data = dt[incumbent_bank == 1])
+
+# Model 2: Interaction with own app quality for incumbents
+r[[2]] <- feols(gr_branch ~ (share_deps_closed_high_app + share_deps_closed_low_app) * own_bank_high_app + 
+                            share_deps_closed_bin0 +
+                            ..controls | ..fixef_branch, 
+                data = dt[incumbent_bank == 1])
+
+# Model 3: Full sample with incumbent flag interaction
+r[[3]] <- feols(gr_branch ~ (share_deps_closed_high_app + share_deps_closed_low_app) * incumbent_bank + 
+                            share_deps_closed_bin0 +
+                            ..controls | ..fixef_branch, 
+                data = dt)
+
+etable(r, 
+       signif.code = c("***" = 0.01, "**" = 0.05, "*" = 0.10),
+       headers = c("Incumbent Only", "Inc × Own App", "Inc Flag"))
+
+```
+
+## 4. Time Heterogeneity: Pre vs Post 2012
+
+```{r}
+#| warning: false
+#| messages: false
+
+r <- list()
+
+# Pre-2012 (financial crisis era)
+r[[1]] <- feols(gr_branch ~ (share_deps_closed_high_app + share_deps_closed_low_app) * own_bank_high_app + 
+                            share_deps_closed_bin0 +
+                            ..controls | ..fixef_branch, 
+                data = dt[YEAR %in% 2001:2011])
+
+# Post-2012 (recovery/modern era)
+r[[2]] <- feols(gr_branch ~ (share_deps_closed_high_app + share_deps_closed_low_app) * own_bank_high_app + 
+                            share_deps_closed_bin0 +
+                            ..controls | ..fixef_branch, 
+                data = dt[YEAR %in% 2012:2021])
+
+# Full period for comparison
+r[[3]] <- feols(gr_branch ~ (share_deps_closed_high_app + share_deps_closed_low_app) * own_bank_high_app + 
+                            share_deps_closed_bin0 +
+                            ..controls | ..fixef_branch, 
+                data = dt)
+
+etable(r, 
+       signif.code = c("***" = 0.01, "**" = 0.05, "*" = 0.10),
+       headers = c("Pre-2012", "Post-2012", "Full Sample"))
+
+```
+
+## 5. Demographic Interactions
+
+Test whether app quality effects vary by county demographics.
+
+```{r}
+#| warning: false
+#| messages: false
+
+# Only for counties with demographic data
+dt_demo <- dt[!is.na(sophisticated)]
+
+r <- list()
+
+# Model 1: Sophisticated counties
+r[[1]] <- feols(gr_branch ~ share_deps_closed_high_app * own_bank_high_app * sophisticated + 
+                            share_deps_closed_low_app * own_bank_high_app +
+                            share_deps_closed_bin0 +
+                            ..controls | ..fixef_branch, 
+                data = dt_demo)
+
+# Model 2: Younger counties
+r[[2]] <- feols(gr_branch ~ share_deps_closed_high_app * own_bank_high_app * above_median_age + 
+                            share_deps_closed_low_app * own_bank_high_app +
+                            share_deps_closed_bin0 +
+                            ..controls | ..fixef_branch, 
+                data = dt_demo)
+
+# Model 3: Higher income counties
+r[[3]] <- feols(gr_branch ~ share_deps_closed_high_app * own_bank_high_app * above_median_income + 
+                            share_deps_closed_low_app * own_bank_high_app +
+                            share_deps_closed_bin0 +
+                            ..controls | ..fixef_branch, 
+                data = dt_demo)
+
+etable(r, 
+       signif.code = c("***" = 0.01, "**" = 0.05, "*" = 0.10),
+       headers = c("Sophisticated", "Age", "Income"))
+
+```
+
+# Summary
+
+Key findings:
+
+1. **Closure heterogeneity**: Do closures by high-app banks create different reallocation effects than low-app closures?
+
+2. **Technology advantage**: Do branches owned by high-app banks capture more deposits following closures?
+
+3. **Match quality**: Is the effect strongest when high-app closers are replaced by high-app survivors?
+
+4. **Market structure**: Do effects differ for incumbent vs closer banks' branches?
+
+5. **Demographics**: Are technology effects stronger in sophisticated/younger/wealthier counties?

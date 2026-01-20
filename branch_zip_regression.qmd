@@ -1,0 +1,165 @@
+---
+title: "Branch-Level Regressions: ZIP Competitor Dynamics"
+author: "Generated Output"
+format:
+  html:
+    self-contained: true
+    code-overflow: scroll
+    toc: true
+execute:
+  warning: false
+  echo: true
+---
+
+Minimal version of `results_competitor_close_open_v4.0.qmd` that analyzes branch-level
+deposit growth as a function of competitor closures/openings at the ZIP level.
+
+# Setup
+
+```{r}
+#| warning: false
+#| messages: false
+
+rm(list=ls())
+library(data.table)
+library(fixest)
+library(DescTools)
+
+# Load branch ZIP panel
+panel_path <- "C:/OneDrive/data/branch_zip_panel.rds"
+dt <- readRDS(panel_path)
+setDT(dt)
+
+# Sample restrictions: branches with no own closures/openings
+dt_3yr <- dt[own_closures_zip == 0 & 
+             own_openings_zip == 0 & 
+             !is.na(dep_gr_3yr) &
+             dep_gr_3yr < 1]
+
+
+# Winsorize for 3-year sample
+dt_3yr[, dep_gr_3yr := Winsorize(dep_gr_3yr, 
+                                                val = quantile(dep_gr_3yr, 
+                                                               probs = c(0.01, 0.99), na.rm = TRUE))]
+
+
+
+```
+
+# Summary Statistics
+
+```{r}
+#| warning: false
+#| messages: false
+
+cat("3-Year Growth Sample:\n")
+cat("  Observations:", nrow(dt_3yr), "\n")
+cat("  Unique branches:", uniqueN(dt_3yr$UNINUMBR), "\n")
+cat("  Mean dt_3yr:", round(mean(dt_3yr$dep_gr_3yr, na.rm = TRUE), 4), "\n")
+```
+
+# Analysis
+
+## Define Fixed Effects and Formulas
+
+```{r}
+#| warning: false
+#| messages: false
+
+setFixest_fml(
+  ..fixef_br_ctyyr = ~ UNINUMBR + county_yr,
+  ..fixef_ctyyr_bnkyr = ~ county_yr + bank_yr,
+  ..fixef_br_ctyyr_bnkyr = ~ UNINUMBR + county_yr + bank_yr,
+  ..fml_baseline_amt = ~ competitor_close_dep_share_prev + log1p(DEPSUMBR),
+  ..fml_interact = ~ competitor_close_dep_share_prev*sophisticated + competitor_close_dep_share_prev*above_median_age + competitor_close_dep_share_prev*above_median_income + log1p(DEPSUMBR)
+)
+
+# Variable labels
+dict <- c(
+  dep_gr_3yr = "Dep growth (t to t+3)",
+  dep_gr_1yr = "Dep growth (t to t+1)",
+  competitor_closures_rate = "Competitor closure rate (ZIP)",
+  competitor_close_dep_share_prev = "Competitor closure dep share (t-1)",
+  "log1p(DEPSUMBR)" = "log(Deposits)"
+)
+
+setFixest_etable(
+  dict = dict,
+  se.below = TRUE
+)
+
+```
+
+## Baseline Regressions
+
+Test whether competitor closures lead to deposit inflows at surviving branches.
+
+```{r}
+#| warning: false
+#| messages: false
+
+r <- list()
+
+# Model 1: Branch FE + County-Year FE (deposit share measure)
+r[[1]] <- feols(dep_gr_3yr ~ ..fml_baseline_amt | ..fixef_br_ctyyr, 
+                data = dt_3yr)
+
+# Model 2: County-Year FE + Bank-Year FE (deposit share)
+r[[2]] <- feols(dep_gr_3yr ~ ..fml_baseline_amt | ..fixef_ctyyr_bnkyr, 
+                data = dt_3yr, 
+                vcov = ~ UNINUMBR)
+
+# Model 3: All three FE (deposit share)
+r[[3]] <- feols(dep_gr_3yr ~ ..fml_baseline_amt | ..fixef_br_ctyyr_bnkyr, 
+                data = dt_3yr)
+
+
+etable(r, 
+       signif.code = c("***" = 0.01, "**" = 0.05, "*" = 0.10),
+       headers = c("Br+Cty-Yr", "Cty-Yr+Bnk-Yr", "All FE"))
+
+```
+
+## Time Heterogeneity
+
+Split by time periods to test if effects vary across crisis/recovery/modern eras.
+
+```{r}
+#| warning: false
+#| messages: false
+
+r <- list()
+
+r[[1]] <-  feols(dep_gr_3yr ~ ..fml_baseline_amt | ..fixef_ctyyr_bnkyr, 
+                data = dt_3yr[YEAR %in% 2001:2011])
+
+r[[2]] <- feols(dep_gr_3yr ~ ..fml_baseline_amt | ..fixef_ctyyr_bnkyr, 
+                data = dt_3yr[YEAR %in% 2012:2021])
+
+etable(r, 
+       signif.code = c("***" = 0.01, "**" = 0.05, "*" = 0.10),
+       headers = c("2001-2011", "2012-2021"))
+
+```
+## Time Heterogeneity-Interaction
+
+
+```{r}
+#| warning: false
+#| messages: false
+
+r <- list()
+
+r[[1]] <-  feols(dep_gr_3yr ~ ..fml_interact  | ..fixef_ctyyr_bnkyr, 
+                data = dt_3yr[YEAR %in% 2001:2011], 
+                vcov = ~ UNINUMBR)
+
+r[[2]] <- feols(dep_gr_3yr ~ ..fml_interact  | ..fixef_ctyyr_bnkyr, 
+                data = dt_3yr[YEAR %in% 2012:2021], 
+                vcov = ~ UNINUMBR)
+
+etable(r, 
+       signif.code = c("***" = 0.01, "**" = 0.05, "*" = 0.10),
+       headers = c("2001-2011", "2012-2021"))
+
+```

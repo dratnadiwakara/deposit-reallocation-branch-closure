@@ -10,14 +10,16 @@ execute:
   echo: true
 ---
 
-This document reproduces the regression block from
-`county_year_incumbents_01202026_v1.qmd` (lines 237-253) using only the
-minimal coexistence panel that `build_minimal_county_panel.R` writes to disk.
+
 
 ```{r}
+#| warning: false
+#| messages: false
+ 
 # -----------------------------------------------------------------------------
 # SETUP
 # -----------------------------------------------------------------------------
+rm(list=ls())
 library(data.table)
 library(fixest)
 
@@ -27,7 +29,7 @@ dt <- readRDS(panel_path)
 setDT(dt)
 
 
-dt <- dt[branches_county_lag1 >= 3 & share_deps_closed_all<0.5 & YEAR<=2021]
+dt <- dt[branches_county_lag1 >= 3 & share_deps_closed_all<0.5 & YEAR<=2021 & incumbent_mkt_share_lag1_all>0.2]
 
 # --- 1. Winsorization ---
 # Winsorize all incumbent growth variables at 1%/99% by YEAR
@@ -41,23 +43,52 @@ dt[, (winsor_vars) := lapply(.SD, function(x) {
   }
 }), by = YEAR, .SDcols = winsor_vars]
 
+
+```
+
+
+```{r}
+#| warning: false
+#| messages: false
+
+
 # Recreate the formulas used in the original chunk.
 setFixest_fml(
   ..fixef_y_z_stateyr = ~ county + state_yr,
-  ..controls = ~  log1p(branches_county_lag1) + county_dep_growth_t4_t1 + log1p(deps_lag1),
+  ..controls = ~  log1p(branches_county_lag1) + county_dep_growth_t4_t1 + log1p(deps_lag1) + incumbent_mkt_share_lag1_all,
   ..interactions_all = ~ share_deps_closed_all*sophisticated +
     share_deps_closed_all*above_median_age +
     share_deps_closed_all*above_median_income
 )
 
+```
+
+
+```{r}
+#| warning: false
+#| messages: false
+
 r <- list()
-r[[1]] <- feols(gr_3y_cd_all ~ share_deps_closed_all + incumbent_mkt_share_lag1_all + ..controls | ..fixef_y_z_stateyr, data = dt[YEAR %in% 2001:2021])
-r[[2]] <- feols(gr_3y_cd_all ~ share_deps_closed_all + incumbent_mkt_share_lag1_all + ..controls | ..fixef_y_z_stateyr, data = dt[YEAR %in% 2001:2011])
-r[[3]] <- feols(gr_3y_cd_all ~ share_deps_closed_all + incumbent_mkt_share_lag1_all + ..controls | ..fixef_y_z_stateyr, data = dt[YEAR %in% 2012:2021])
-r[[4]] <- feols(gr_3y_cd_all ~ ..interactions_all + incumbent_mkt_share_lag1_all + ..controls | ..fixef_y_z_stateyr, data = dt[YEAR %in% 2001:2011])
-r[[5]] <- feols(gr_3y_cd_all ~ ..interactions_all + incumbent_mkt_share_lag1_all + ..controls | ..fixef_y_z_stateyr, data = dt[YEAR %in% 2012:2021])
+r[[1]] <- feols(gr_3y_cd_all ~ share_deps_closed_all +  ..controls | ..fixef_y_z_stateyr, data = dt[YEAR %in% 2001:2021])
+r[[2]] <- feols(gr_3y_cd_all ~ share_deps_closed_all +  ..controls | ..fixef_y_z_stateyr, data = dt[YEAR %in% 2001:2011])
+r[[3]] <- feols(gr_3y_cd_all ~ share_deps_closed_all +  ..controls | ..fixef_y_z_stateyr, data = dt[YEAR %in% 2012:2021])
 
 md_table(etable(r,
                 signif.code = c("***" = 0.01, "**" = 0.05, "*" = 0.10),
-                headers = c("Full Main", "Pre-12 Main", "Post-12 Main", "Pre-12 Int", "Post-12 Int")))
+                headers = c("Full Main", "Pre-12 Main", "Post-12 Main")))
 ```
+
+```{r}
+#| warning: false
+#| messages: false
+
+r <- list()
+r[[1]] <- feols(gr_3y_cd_all ~ ..interactions_all +  ..controls | ..fixef_y_z_stateyr, data = dt[YEAR %in% 2001:2021])
+r[[2]] <- feols(gr_3y_cd_all ~ ..interactions_all +  ..controls | ..fixef_y_z_stateyr, data = dt[YEAR %in% 2001:2011])
+r[[3]] <- feols(gr_3y_cd_all ~ ..interactions_all +  ..controls | ..fixef_y_z_stateyr, data = dt[YEAR %in% 2012:2021])
+
+md_table(etable(r,
+                signif.code = c("***" = 0.01, "**" = 0.05, "*" = 0.10),
+                headers = c("Full Interaction", "Pre-12 Interaction", "Post-12 Interaction")))
+```
+
