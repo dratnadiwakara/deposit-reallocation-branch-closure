@@ -286,7 +286,7 @@ final_panel[, `:=`(
 # 7. Save
 # ---------------------------------------------------------------------
 output_columns <- c("county", "YEAR", 
-                    
+
                     # Dependent (Large)
                     "incumbent_dep_gr_1yr_lg",
                     "incumbent_dep_gr_1yr_cd_lg",

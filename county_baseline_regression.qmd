@@ -1,0 +1,63 @@
+---
+title: "Minimal Baseline Regression"
+author: "Generated Output"
+format:
+  html:
+    self-contained: true
+    code-overflow: scroll
+execute:
+  warning: false
+  echo: true
+---
+
+This document reproduces the regression block from
+`county_year_incumbents_01202026_v1.qmd` (lines 237-253) using only the
+minimal coexistence panel that `build_minimal_county_panel.R` writes to disk.
+
+```{r}
+# -----------------------------------------------------------------------------
+# SETUP
+# -----------------------------------------------------------------------------
+library(data.table)
+library(fixest)
+
+# Path must match the output of build_minimal_county_panel.R.
+panel_path <- "C:/OneDrive/data/county_coexistence_panel_slim.rds"
+dt <- readRDS(panel_path)
+setDT(dt)
+
+
+dt <- dt[branches_county_lag1 >= 3 & share_deps_closed_all<0.5 & YEAR<=2021]
+
+# --- 1. Winsorization ---
+# Winsorize all incumbent growth variables at 1%/99% by YEAR
+winsor_vars <- c("gr_3y_cd_all","county_dep_growth_t4_t1")
+
+dt[, (winsor_vars) := lapply(.SD, function(x) {
+  if (sum(!is.na(x)) > 0) {
+    Winsorize(x, val = quantile(x, probs = c(0.025, 0.975), na.rm = TRUE))
+  } else {
+    x 
+  }
+}), by = YEAR, .SDcols = winsor_vars]
+
+# Recreate the formulas used in the original chunk.
+setFixest_fml(
+  ..fixef_y_z_stateyr = ~ county + state_yr,
+  ..controls = ~  log1p(branches_county_lag1) + county_dep_growth_t4_t1 + log1p(deps_lag1),
+  ..interactions_all = ~ share_deps_closed_all*sophisticated +
+    share_deps_closed_all*above_median_age +
+    share_deps_closed_all*above_median_income
+)
+
+r <- list()
+r[[1]] <- feols(gr_3y_cd_all ~ share_deps_closed_all + incumbent_mkt_share_lag1_all + ..controls | ..fixef_y_z_stateyr, data = dt[YEAR %in% 2001:2021])
+r[[2]] <- feols(gr_3y_cd_all ~ share_deps_closed_all + incumbent_mkt_share_lag1_all + ..controls | ..fixef_y_z_stateyr, data = dt[YEAR %in% 2001:2011])
+r[[3]] <- feols(gr_3y_cd_all ~ share_deps_closed_all + incumbent_mkt_share_lag1_all + ..controls | ..fixef_y_z_stateyr, data = dt[YEAR %in% 2012:2021])
+r[[4]] <- feols(gr_3y_cd_all ~ ..interactions_all + incumbent_mkt_share_lag1_all + ..controls | ..fixef_y_z_stateyr, data = dt[YEAR %in% 2001:2011])
+r[[5]] <- feols(gr_3y_cd_all ~ ..interactions_all + incumbent_mkt_share_lag1_all + ..controls | ..fixef_y_z_stateyr, data = dt[YEAR %in% 2012:2021])
+
+md_table(etable(r,
+                signif.code = c("***" = 0.01, "**" = 0.05, "*" = 0.10),
+                headers = c("Full Main", "Pre-12 Main", "Post-12 Main", "Pre-12 Int", "Post-12 Int")))
+```

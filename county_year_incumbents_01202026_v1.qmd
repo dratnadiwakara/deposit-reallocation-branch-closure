@@ -1,0 +1,257 @@
+---
+title: "County-Level Analysis: Market Segmentation & Exits"
+author: "Analysis Update Dec 20"
+format:
+ html:
+   page-layout: full
+   code-overflow: scroll
+   code-fold: true
+   number-sections: true
+   self-contained: true
+editor: source
+execute: 
+ warning: false
+ echo: true
+---
+
+
+```{r}
+# -----------------------------------------------------------------------------
+# SETUP
+# -----------------------------------------------------------------------------
+# Purpose: Load necessary libraries and custom summary statistics function.
+# -----------------------------------------------------------------------------
+rm(list=ls())
+library(data.table)
+library(fixest)
+library(DescTools)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(readxl)
+library(stringr)
+library(marginaleffects)
+
+# Update path to your summary stats function if needed
+source('https://raw.githubusercontent.com/dratnadiwakara/r-utilities/refs/heads/main/summary_stat_tables.R')
+
+```
+
+
+
+```{r}
+# -----------------------------------------------------------------------------
+# DATA LOADING & PREPARATION
+# -----------------------------------------------------------------------------
+# Purpose: Load the updated V5 dataset (includes Small Shocks and Exit/Stay splits).
+#          Winsorize growth variables to handle outliers.
+#          Define short variable names for easier regression syntax.
+# -----------------------------------------------------------------------------
+
+# Load the V5 Dataset (Contains Small Shocks & Exit/Stay splits)
+dt <- readRDS("C:/OneDrive/data/county_coexistence_panel_Dec19_v6.rds")
+setDT(dt)
+
+# Filter: Minimum 3 branches in county to ensure a valid market for competition analysis
+dt <- dt[branches_county_lag1 >= 3]
+
+# --- 1. Winsorization ---
+# Winsorize all incumbent growth variables at 1%/99% by YEAR
+winsor_vars <- grep("^incumbent_dep_gr_", names(dt), value = TRUE)
+
+dt[, (winsor_vars) := lapply(.SD, function(x) {
+  if (sum(!is.na(x)) > 0) {
+    Winsorize(x, val = quantile(x, probs = c(0.01, 0.99), na.rm = TRUE))
+  } else {
+    x 
+  }
+}), by = YEAR, .SDcols = winsor_vars]
+
+# --- 2. Variable Shortnames ---
+# Large Incumbents (Main Focus)
+dt[, gr_3y_cd_lg       := incumbent_dep_gr_3yr_cd_lg]
+dt[, gr_3y_cd_lag_lg   := incumbent_dep_gr_3yr_cd_lag_lg]
+dt[, gr_1y_cd_lg       := incumbent_dep_gr_1yr_cd_lg]
+
+# Small Incumbents
+dt[, gr_1y_cd_sm    := incumbent_dep_gr_1yr_cd_sm]
+dt[, gr_3y_cd_sm    := incumbent_dep_gr_3yr_cd_sm]
+
+# All Incumbents
+dt[, gr_3y_cd_all   := incumbent_dep_gr_3yr_cd_all]
+dt[, gr_1y_cd_all   := incumbent_dep_gr_1yr_cd_all]
+dt[, gr_3y_cd_lag_all := incumbent_dep_gr_3yr_cd_lag_all]
+
+
+# -----------------------------------------------------------------------------
+# MERGE DEMOGRAPHICS
+# -----------------------------------------------------------------------------
+# Purpose: Add county-level demographic data (sophistication, age, income).
+#          Create dummy variables for interactions.
+# -----------------------------------------------------------------------------
+county_demo_data <- readRDS("C:/OneDrive/data/county_demo_data.rds")
+county_demo_data <- unique(county_demo_data,by=c("county_fips","yr"))
+
+dt <- merge(dt,
+            county_demo_data[!is.na(county_fips),.(county_fips, yr, sophisticated, age_bin, 
+                                                   median_age, median_income, pct_college_educated, 
+                                                   above_median_age, above_median_income)],
+            by.x = c("county", "YEAR"),
+            by.y = c("county_fips", "yr"),
+            all.x = TRUE)
+
+dt <- dt[!is.na(sophisticated)]
+dt[, sophisticated := as.integer(sophisticated == 1L)]
+dt[, factor_age_bin := factor(age_bin)]
+dt[, log_income := log1p(median_income)]
+dt[, state_yr := paste(substr(county, 1, 2), YEAR)]
+
+
+# -----------------------------------------------------------------------------
+# PANEL BALANCING & MARKET CONTROLS
+# -----------------------------------------------------------------------------
+# Purpose: Ensure panel is balanced (zeros for missing years) to calculate lags correctly.
+#          Construct market-level controls (total deposits, market growth).
+# -----------------------------------------------------------------------------
+sod_data <- readRDS("C:/OneDrive/data/fdic_sod_2000_2025_simple.rds")
+sod_data[, county := str_pad(STCNTYBR, 5, "left", "0")]
+
+county_panel <- sod_data[, .(
+  total_deps = sum(DEPSUMBR, na.rm = TRUE)
+), by = .(county, YEAR)]
+
+all_zips  <- unique(county_panel$county)
+min_yr    <- min(county_panel$YEAR)
+max_yr    <- max(county_panel$YEAR)
+full_grid <- CJ(county = all_zips, YEAR = min_yr:max_yr)
+
+county_panel_balanced <- merge(full_grid, county_panel, by = c("county", "YEAR"), all.x = TRUE)
+county_panel_balanced[is.na(total_deps), total_deps := 0]
+
+setorder(county_panel_balanced, county, YEAR)
+
+county_panel_balanced[, `:=`(
+  deps_lag1 = shift(total_deps, 1L, type = "lag"),
+  deps_lag4 = shift(total_deps, 4L, type = "lag")
+), by = county]
+
+county_panel_balanced[, `:=`(
+  county_dep_growth_t4_t1 = fifelse(deps_lag4 > 0, 
+                                    (deps_lag1 - deps_lag4) / deps_lag4, 
+                                    NA_real_)
+)]
+
+dt <- merge(dt, county_panel_balanced, by = c("county", "YEAR"), all.x = TRUE)
+dt[, county_dep_growth_t4_t1 := Winsorize(county_dep_growth_t4_t1, 
+                                          val = quantile(county_dep_growth_t4_t1, probs = c(0.01, 0.99), na.rm = T)), 
+   by = YEAR]
+```
+
+
+
+
+```{r}
+# -----------------------------------------------------------------------------
+# REGRESSION CONFIGURATION
+# -----------------------------------------------------------------------------
+# Purpose: Define reusable formulas for Fixed Effects (county + state-year) and Controls.
+#          Define interaction terms for Large, Small, and All shocks.
+# -----------------------------------------------------------------------------
+setFixest_fml(
+  ..fixef_y_z_stateyr = ~ county + state_yr,
+  
+  # Interactions
+  ..interactions_lg   = ~ share_deps_closed_lg*sophisticated + share_deps_closed_lg*above_median_age + share_deps_closed_lg*above_median_income,
+  ..interactions_sm   = ~ share_deps_closed_sm*sophisticated + share_deps_closed_sm*above_median_age + share_deps_closed_sm*above_median_income,
+  ..interactions_all  = ~ share_deps_closed_all*sophisticated + share_deps_closed_all*above_median_age + share_deps_closed_all*above_median_income,
+  
+  # Controls
+  ..controls          = ~ log1p(branches_county_lag1) + county_dep_growth_t4_t1 + log1p(deps_lag1)
+)
+
+setFixest_etable(se.below = TRUE)
+```
+
+
+# Summary Stats for 2019 (Full Sample)
+
+```{r}
+# -----------------------------------------------------------------------------
+# SUMMARY STATISTICS
+# -----------------------------------------------------------------------------
+# Purpose: Generate summary stats for all variables used in the regression analysis.
+#          Includes dependent vars, shocks, controls, and demographics.
+# -----------------------------------------------------------------------------
+
+vars <- c(
+  # --- Dependent Variables (Growth) ---
+  "gr_3y_cd_lg",       # Large Incumbents (3y)
+  "gr_1y_cd_lg",       # Large Incumbents (1y)
+  "gr_3y_cd_sm",    # Small Incumbents (3y)
+  "gr_1y_cd_sm",    # Small Incumbents (1y)
+  "gr_3y_cd_all",   # All Incumbents (3y)
+  "gr_1y_cd_all",   # All Incumbents (1y)
+  "gr_3y_cd_lag_all", # All Incumbents (Lagged 3y)
+
+  # --- Shocks (Independent Vars) ---
+  "share_deps_closed_lg",       # Large Closures (Total)
+  "share_deps_closed_sm",       # Small Closures (Total)
+  "share_deps_closed_all",      # All Closures (Total)
+  "share_deps_closed_lg_exit",  # Large Closures (Exit)
+  "share_deps_closed_lg_stay",  # Large Closures (Stay)
+
+  # --- Market Controls ---
+  "incumbent_mkt_share_lag1",
+  "incumbent_mkt_share_lag1_all",
+  "incumbent_mkt_share_lag1_lg",
+  "incumbent_mkt_share_lag1_sm",
+  "branches_county_lag1",
+  "deps_lag1",                  # Total Market Deposits (Lag)
+  "county_dep_growth_t4_t1",    # Pre-trend Growth
+
+  # --- Demographics ---
+  "sophisticated",        # Binary
+  "above_median_age",     # Binary
+  "above_median_income",  # Binary
+  "median_income",        # Raw
+  "median_age",           # Raw
+  "pct_college_educated"  # Raw
+)
+
+# Table 1: Summary Stats for 2019 (Full Sample)
+temp <- summary_stats_function(dt[YEAR == 2019], vars)
+md_table(temp)
+
+```
+# Summary Stats for 2019 (Conditioned on Non-Zero Large Shock)
+
+```{r}
+# Table 2: Summary Stats for 2019 (Conditioned on Non-Zero Large Shock)
+# Shows stats specifically for counties affected by large bank closures
+temp <- summary_stats_function(dt[YEAR == 2019 & share_deps_closed_lg > 0], vars)
+md_table(temp)
+```
+# Baseline Analysis (All Banks)
+
+```{r}
+# -----------------------------------------------------------------------------
+# TABLE 1: Baseline Analysis (All Banks)
+# -----------------------------------------------------------------------------
+# Purpose: Replicate baseline analysis aggregating ALL banks (Large + Small).
+# LHS: 3-year deposit growth of ALL incumbents.
+# RHS: Share of market deposits held by ANY closing bank.
+# -----------------------------------------------------------------------------
+r <- list()
+r[[1]] <- feols(gr_3y_cd_all ~ share_deps_closed_all + incumbent_mkt_share_lag1_all + ..controls | ..fixef_y_z_stateyr, data=dt)
+r[[2]] <- feols(gr_3y_cd_all ~ share_deps_closed_all + incumbent_mkt_share_lag1_all + ..controls | ..fixef_y_z_stateyr, data=dt[YEAR<=2011])
+r[[3]] <- feols(gr_3y_cd_all ~ share_deps_closed_all + incumbent_mkt_share_lag1_all + ..controls | ..fixef_y_z_stateyr, data=dt[YEAR>=2012])
+r[[4]] <- feols(gr_3y_cd_all ~ ..interactions_all + incumbent_mkt_share_lag1_all + ..controls | ..fixef_y_z_stateyr, data=dt[YEAR<=2011])
+r[[5]] <- feols(gr_3y_cd_all ~ ..interactions_all + incumbent_mkt_share_lag1_all + ..controls | ..fixef_y_z_stateyr, data=dt[YEAR>=2012])
+
+md_table(etable(r, signif.code = c("***"=0.01, "**"=0.05, "*"=0.10),
+                headers=c("Full Main", "Pre-12 Main", "Post-12 Main", "Pre-12 Int", "Post-12 Int")))
+```
+
+
+
+
