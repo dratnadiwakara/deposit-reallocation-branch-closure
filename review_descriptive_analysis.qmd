@@ -1,0 +1,387 @@
+---
+title: "Bank App Reviews: Descriptive Analysis"
+author: "Generated Output"
+format:
+  html:
+    self-contained: true
+    code-overflow: scroll
+    toc: true
+execute:
+  warning: false
+  echo: true
+---
+
+Comprehensive descriptive analysis of the relationship between bank size and mobile app ratings.
+
+# Setup
+
+```{r}
+#| warning: false
+#| messages: false
+
+rm(list=ls())
+library(data.table)
+library(ggplot2)
+
+# Load raw reviews (review-level data)
+reviews_raw <- fread("C:/OneDrive/data/CH_app_reviews_data.csv")
+setDT(reviews_raw)
+
+# Load FDIC data for bank characteristics
+fdic_all <- readRDS("C:/OneDrive/data/fdic_sod_2000_2025_simple.rds")
+setDT(fdic_all)
+fdic_all <- fdic_all[, .(CERT, ASSET, YEAR)]
+fdic_all <- unique(fdic_all)
+
+# Merge reviews with FDIC to get bank sizes
+reviews_raw <- merge(reviews_raw, fdic_all, 
+                     by.x = c("FDIC_certificate_id", "review_year"), 
+                     by.y = c("CERT", "YEAR"), 
+                     all.x = TRUE)
+
+# Create size categories
+reviews_raw[, size_category := fifelse(ASSET >= 10000000, "Large (>$10B)",
+                                       fifelse(ASSET >= 1000000, "Medium ($1B-$10B)",
+                                              fifelse(ASSET > 0, "Small (<$1B)", NA_character_)))]
+
+# Aggregate to bank-year level
+reviews_agg <- reviews_raw[, .(
+  mean_app_rating = mean(rating, na.rm = TRUE),
+  total_reviews = sum(reviews_count, na.rm = TRUE),
+  n_review_obs = .N
+), by = .(FDIC_certificate_id, review_year, ASSET, size_category)]
+
+setnames(reviews_agg, c("FDIC_certificate_id", "review_year"), c("CERT", "YEAR"))
+
+# Flag banks with vs without reviews
+banks_with_reviews <- unique(reviews_agg$CERT)
+fdic_all[, has_review := fifelse(CERT %in% banks_with_reviews, 1L, 0L)]
+
+# Also keep reviews_with_size for downstream analyses (using reviews_agg)
+reviews_with_size <- reviews_agg
+
+```
+
+# Overview: Review-Level Data
+
+```{r}
+#| warning: false
+#| messages: false
+
+cat("Total reviews in dataset:", nrow(reviews_raw), "\n")
+cat("Unique banks with reviews:", uniqueN(reviews_raw$FDIC_certificate_id), "\n")
+cat("Review period:", min(reviews_raw$review_year), "to", max(reviews_raw$review_year), "\n\n")
+
+cat("Mean rating (all reviews):", round(mean(reviews_raw$rating, na.rm = TRUE), 3), "\n")
+cat("SD rating:", round(sd(reviews_raw$rating, na.rm = TRUE), 3), "\n")
+cat("Median reviews per bank-year:", median(reviews_agg$total_reviews, na.rm = TRUE), "\n")
+
+```
+
+# Review Counts and Frequency by Bank Size
+
+```{r}
+#| warning: false
+#| messages: false
+
+# Analysis by size category for 2019
+reviews_by_size_2019 <- reviews_agg[YEAR == 2019 & !is.na(size_category), .(
+  n_banks = .N,
+  mean_reviews = mean(total_reviews, na.rm = TRUE),
+  median_reviews = median(total_reviews, na.rm = TRUE),
+  total_reviews = sum(total_reviews, na.rm = TRUE),
+  mean_rating = mean(mean_app_rating, na.rm = TRUE)
+), by = size_category]
+
+print("Review Activity by Bank Size (2019):")
+print(reviews_by_size_2019)
+
+# Plot: Total reviews by size category over time
+reviews_by_size_year <- reviews_agg[!is.na(size_category), .(
+  total_reviews = sum(total_reviews, na.rm = TRUE),
+  n_banks = .N
+), by = .(review_year = YEAR, size_category)]
+
+ggplot(reviews_by_size_year, aes(x = review_year, y = total_reviews, fill = size_category)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Total App Reviews by Bank Size Over Time",
+       x = "Year", y = "Number of Reviews", fill = "Bank Size") +
+  theme_minimal()
+
+```
+
+# Rating Variance by Bank Size
+
+```{r}
+#| warning: false
+#| messages: false
+
+# Within-bank rating variance (using individual reviews)
+rating_variance <- reviews_raw[!is.na(size_category), .(
+  mean_rating = mean(rating, na.rm = TRUE),
+  sd_rating = sd(rating, na.rm = TRUE),
+  n_reviews = .N
+), by = .(FDIC_certificate_id, review_year, size_category)]
+
+# Aggregate variance by size category (2019)
+variance_by_size <- rating_variance[review_year == 2019 & n_reviews >= 5, .(
+  mean_sd = mean(sd_rating, na.rm = TRUE),
+  median_sd = median(sd_rating, na.rm = TRUE),
+  n_banks = .N
+), by = size_category]
+
+print("Rating Variance by Bank Size (2019, banks with 5+ reviews):")
+print(variance_by_size)
+
+# Plot: Distribution of within-bank rating SD by size
+ggplot(rating_variance[review_year == 2019 & n_reviews >= 5], 
+       aes(x = size_category, y = sd_rating)) +
+  geom_boxplot() +
+  labs(title = "Within-Bank Rating Variance by Size (2019)",
+       subtitle = "Banks with 5+ reviews only",
+       x = "Bank Size", y = "SD of Ratings") +
+  theme_minimal()
+
+```
+
+# Coverage: Banks with vs without App Reviews
+
+```{r}
+#| warning: false
+#| messages: false
+
+# By year: count and asset share
+coverage_by_year <- fdic_all[, .(
+  n_banks = uniqueN(CERT),
+  n_with_review = uniqueN(CERT[has_review == 1]),
+  total_assets = sum(ASSET, na.rm = TRUE),
+  assets_with_review = sum(ASSET[has_review == 1], na.rm = TRUE)
+), by = YEAR]
+
+coverage_by_year[, pct_banks_with_review := 100 * n_with_review / n_banks]
+coverage_by_year[, pct_assets_with_review := 100 * assets_with_review / total_assets]
+
+# Plot: Coverage over time
+ggplot(coverage_by_year[YEAR >= 2010], aes(x = YEAR)) +
+  geom_line(aes(y = pct_banks_with_review), color = "blue") +
+  geom_line(aes(y = pct_assets_with_review), color = "red", linetype = "dashed") +
+  labs(title = "App Review Coverage (Blue: % Banks, Red: % Assets)",
+       y = "Percent", x = "Year") +
+  theme_minimal()
+
+```
+
+# Bank Size: With vs Without Reviews
+
+```{r}
+#| warning: false
+#| messages: false
+
+# Compare asset distribution
+size_comparison <- fdic_all[YEAR == 2019, .(
+  mean_asset = mean(ASSET, na.rm = TRUE),
+  median_asset = median(ASSET, na.rm = TRUE),
+  n = .N
+), by = has_review]
+
+print(size_comparison)
+
+# Plot: Asset distribution
+fdic_all_2019 <- fdic_all[YEAR == 2019 & ASSET > 0]
+ggplot(fdic_all_2019, aes(x = log(ASSET), fill = factor(has_review))) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Bank Size Distribution (2019)",
+       x = "log(Assets)", fill = "Has Review") +
+  theme_minimal()
+
+```
+
+# App Quality: High vs Low Ratings Over Time
+
+```{r}
+#| warning: false
+#| messages: false
+
+# Create app quality bins
+reviews_with_size[, app_quality := fifelse(mean_app_rating >= 4, "High (4+)",
+                                           fifelse(mean_app_rating >= 3, "Medium (3-4)",
+                                                  "Low (<3)"))]
+
+# Count by year and quality
+quality_by_year <- reviews_with_size[, .(
+  n_banks = uniqueN(CERT),
+  mean_asset = mean(ASSET, na.rm = TRUE)
+), by = .(YEAR, app_quality)]
+
+# Plot: Number of banks by app quality over time
+ggplot(quality_by_year, aes(x = YEAR, y = n_banks, color = app_quality)) +
+  geom_line() +
+  labs(title = "Banks by App Quality Over Time",
+       y = "Number of Banks", color = "App Quality") +
+  theme_minimal()
+
+```
+
+# App Quality vs Bank Size
+
+```{r}
+#| warning: false
+#| messages: false
+
+# 2019 comparison
+reviews_2019 <- reviews_with_size[YEAR == 2019]
+
+# Mean assets by quality
+asset_by_quality <- reviews_2019[, .(
+  mean_asset = mean(ASSET, na.rm = TRUE),
+  median_asset = median(ASSET, na.rm = TRUE),
+  n = .N
+), by = app_quality]
+
+print(asset_by_quality)
+
+# Plot: Asset distribution by app quality
+ggplot(reviews_2019[ASSET > 0], aes(x = app_quality, y = log(ASSET))) +
+  geom_boxplot() +
+  labs(title = "Bank Size by App Quality (2019)",
+       x = "App Quality", y = "log(Assets)") +
+  theme_minimal()
+
+```
+
+# Correlation: Bank Size vs App Rating
+
+```{r}
+#| warning: false
+#| messages: false
+
+# Correlation analysis for 2019
+reviews_2019_clean <- reviews_2019[!is.na(ASSET) & ASSET > 0 & !is.na(mean_app_rating)]
+reviews_2019_clean[, log_asset := log(ASSET)]
+
+# Compute correlations
+cor_log <- cor(reviews_2019_clean$log_asset, reviews_2019_clean$mean_app_rating, 
+               use = "complete.obs")
+cor_raw <- cor(reviews_2019_clean$ASSET, reviews_2019_clean$mean_app_rating, 
+               use = "complete.obs")
+
+cat("Correlation between log(Assets) and App Rating (2019):", round(cor_log, 3), "\n")
+cat("Correlation between Assets and App Rating (2019):", round(cor_raw, 3), "\n\n")
+
+# Simple linear regression
+lm_result <- lm(mean_app_rating ~ log_asset, data = reviews_2019_clean)
+cat("Regression: mean_app_rating ~ log(Assets)\n")
+cat("  Coefficient on log(Assets):", round(coef(lm_result)[2], 4), "\n")
+cat("  t-statistic:", round(summary(lm_result)$coefficients[2, 3], 2), "\n")
+cat("  R-squared:", round(summary(lm_result)$r.squared, 4), "\n\n")
+
+# Raw scatterplot (sample if too many points)
+if (nrow(reviews_2019_clean) > 1000) {
+  sample_size <- 1000
+  plot_data <- reviews_2019_clean[sample(.N, sample_size)]
+  plot_title <- paste0("Bank Size vs App Rating (2019, Random Sample of ", sample_size, ")")
+} else {
+  plot_data <- reviews_2019_clean
+  plot_title <- "Bank Size vs App Rating (2019, All Banks)"
+}
+
+ggplot(plot_data, aes(x = log_asset, y = mean_app_rating)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  labs(title = plot_title,
+       x = "log(Assets)", y = "Mean App Rating") +
+  theme_minimal()
+
+# Binned scatterplot: group log(Assets) into bins and plot mean rating per bin
+reviews_2019_clean[, asset_bin := cut(log_asset, breaks = 20, labels = FALSE)]
+binned_data <- reviews_2019_clean[, .(
+  mean_log_asset = mean(log_asset),
+  mean_rating = mean(mean_app_rating),
+  median_rating = median(mean_app_rating),
+  sd_rating = sd(mean_app_rating),
+  n = .N
+), by = asset_bin]
+
+ggplot(binned_data, aes(x = mean_log_asset, y = mean_rating)) +
+  geom_point(aes(size = n)) +
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  geom_errorbar(aes(ymin = mean_rating - sd_rating/sqrt(n), 
+                    ymax = mean_rating + sd_rating/sqrt(n)), 
+                width = 0.1, alpha = 0.5) +
+  labs(title = "Binned Scatter: Bank Size vs App Rating (2019)",
+       subtitle = "20 equal-sized bins, error bars show +/- SE",
+       x = "log(Assets) Bin Average", y = "Mean App Rating", size = "N Banks") +
+  theme_minimal()
+
+```
+
+# Review Penetration: What Share of Banks Have Apps?
+
+```{r}
+#| warning: false
+#| messages: false
+
+# For each size category, what fraction of banks have reviews?
+# Need to merge all banks with review flags
+fdic_all[, size_category := fifelse(ASSET >= 10000000, "Large (>$10B)",
+                                    fifelse(ASSET >= 1000000, "Medium ($1B-$10B)",
+                                           fifelse(ASSET > 0, "Small (<$1B)", NA_character_)))]
+
+penetration_2019 <- fdic_all[YEAR == 2019 & !is.na(size_category), .(
+  n_banks = .N,
+  n_with_app = sum(has_review),
+  pct_with_app = 100 * mean(has_review)
+), by = size_category]
+
+print("App Penetration by Bank Size (2019):")
+print(penetration_2019)
+
+# Over time
+penetration_time <- fdic_all[YEAR >= 2010 & !is.na(size_category), .(
+  pct_with_app = 100 * mean(has_review)
+), by = .(YEAR, size_category)]
+
+ggplot(penetration_time, aes(x = YEAR, y = pct_with_app, color = size_category)) +
+  geom_line() +
+  labs(title = "App Penetration Rate by Bank Size Over Time",
+       x = "Year", y = "% of Banks with App Reviews", color = "Bank Size") +
+  theme_minimal()
+
+```
+
+# Size and Rating Over Time
+
+```{r}
+#| warning: false
+#| messages: false
+
+# Mean rating by size category over time
+rating_by_size_year <- reviews_with_size[!is.na(mean_app_rating) & !is.na(size_category), .(
+  mean_rating = mean(mean_app_rating, na.rm = TRUE),
+  n_banks = .N
+), by = .(YEAR, size_category)]
+
+# Plot: Mean rating by size over time
+ggplot(rating_by_size_year, aes(x = YEAR, y = mean_rating, color = size_category)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Mean App Rating by Bank Size Over Time",
+       x = "Year", y = "Mean App Rating", color = "Size Category") +
+  theme_minimal()
+
+```
+
+# Distribution of Ratings by Size (2019)
+
+```{r}
+#| warning: false
+#| messages: false
+
+# Histogram of ratings by size category
+ggplot(reviews_2019_clean, aes(x = mean_app_rating, fill = size_category)) +
+  geom_histogram(bins = 30, alpha = 0.6, position = "identity") +
+  labs(title = "Distribution of App Ratings by Bank Size (2019)",
+       x = "Mean App Rating", fill = "Size Category") +
+  theme_minimal()
+
+```
