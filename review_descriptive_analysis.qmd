@@ -110,36 +110,35 @@ ggplot(reviews_by_size_year, aes(x = review_year, y = total_reviews, fill = size
 
 ```
 
-# Rating Variance by Bank Size
+# Mean Rating by Bank Size
 
 ```{r}
 #| warning: false
 #| messages: false
 
-# Within-bank rating variance (using individual reviews)
-rating_variance <- reviews_raw[!is.na(size_category), .(
+# Within-bank mean rating (using individual reviews)
+rating_stats <- reviews_raw[!is.na(size_category), .(
   mean_rating = mean(rating, na.rm = TRUE),
-  sd_rating = sd(rating, na.rm = TRUE),
   n_reviews = .N
 ), by = .(FDIC_certificate_id, review_year, size_category)]
 
-# Aggregate variance by size category (2019)
-variance_by_size <- rating_variance[review_year == 2019 & n_reviews >= 5, .(
-  mean_sd = mean(sd_rating, na.rm = TRUE),
-  median_sd = median(sd_rating, na.rm = TRUE),
+# Aggregate mean rating by size category (2019)
+mean_by_size <- rating_stats[review_year == 2019 & n_reviews >= 5, .(
+  mean_rating = mean(mean_rating, na.rm = TRUE),
+  median_rating = median(mean_rating, na.rm = TRUE),
   n_banks = .N
 ), by = size_category]
 
-print("Rating Variance by Bank Size (2019, banks with 5+ reviews):")
-print(variance_by_size)
+print("Mean Rating by Bank Size (2019, banks with 5+ reviews):")
+print(mean_by_size)
 
-# Plot: Distribution of within-bank rating SD by size
-ggplot(rating_variance[review_year == 2019 & n_reviews >= 5], 
-       aes(x = size_category, y = sd_rating)) +
+# Plot: Distribution of within-bank mean rating by size
+ggplot(rating_stats[review_year == 2019 & n_reviews >= 5], 
+       aes(x = size_category, y = mean_rating)) +
   geom_boxplot() +
-  labs(title = "Within-Bank Rating Variance by Size (2019)",
+  labs(title = "Mean Rating by Bank Size (2019)",
        subtitle = "Banks with 5+ reviews only",
-       x = "Bank Size", y = "SD of Ratings") +
+       x = "Bank Size", y = "Mean Rating") +
   theme_minimal()
 
 ```
