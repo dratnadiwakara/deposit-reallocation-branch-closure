@@ -53,9 +53,11 @@ reviews_agg <- reviews_raw[, .(
 
 setnames(reviews_agg, c("FDIC_certificate_id", "review_year"), c("CERT", "YEAR"))
 
-# Flag banks with vs without reviews
-banks_with_reviews <- unique(reviews_agg$CERT)
-fdic_all[, has_review := fifelse(CERT %in% banks_with_reviews, 1L, 0L)]
+# Flag banks with vs without reviews (separately for each year)
+reviews_banks_by_year <- unique(reviews_agg[, .(CERT, YEAR)])
+fdic_all <- merge(fdic_all, reviews_banks_by_year[, .(CERT, YEAR, has_review = 1L)], 
+                  by = c("CERT", "YEAR"), all.x = TRUE)
+fdic_all[is.na(has_review), has_review := 0L]
 
 # Also keep reviews_with_size for downstream analyses (using reviews_agg)
 reviews_with_size <- reviews_agg
@@ -170,83 +172,6 @@ ggplot(coverage_by_year[YEAR >= 2010], aes(x = YEAR)) +
 
 ```
 
-# Bank Size: With vs Without Reviews
-
-```{r}
-#| warning: false
-#| messages: false
-
-# Compare asset distribution
-size_comparison <- fdic_all[YEAR == 2019, .(
-  mean_asset = mean(ASSET, na.rm = TRUE),
-  median_asset = median(ASSET, na.rm = TRUE),
-  n = .N
-), by = has_review]
-
-print(size_comparison)
-
-# Plot: Asset distribution
-fdic_all_2019 <- fdic_all[YEAR == 2019 & ASSET > 0]
-ggplot(fdic_all_2019, aes(x = log(ASSET), fill = factor(has_review))) +
-  geom_density(alpha = 0.5) +
-  labs(title = "Bank Size Distribution (2019)",
-       x = "log(Assets)", fill = "Has Review") +
-  theme_minimal()
-
-```
-
-# App Quality: High vs Low Ratings Over Time
-
-```{r}
-#| warning: false
-#| messages: false
-
-# Create app quality bins
-reviews_with_size[, app_quality := fifelse(mean_app_rating >= 4, "High (4+)",
-                                           fifelse(mean_app_rating >= 3, "Medium (3-4)",
-                                                  "Low (<3)"))]
-
-# Count by year and quality
-quality_by_year <- reviews_with_size[, .(
-  n_banks = uniqueN(CERT),
-  mean_asset = mean(ASSET, na.rm = TRUE)
-), by = .(YEAR, app_quality)]
-
-# Plot: Number of banks by app quality over time
-ggplot(quality_by_year, aes(x = YEAR, y = n_banks, color = app_quality)) +
-  geom_line() +
-  labs(title = "Banks by App Quality Over Time",
-       y = "Number of Banks", color = "App Quality") +
-  theme_minimal()
-
-```
-
-# App Quality vs Bank Size
-
-```{r}
-#| warning: false
-#| messages: false
-
-# 2019 comparison
-reviews_2019 <- reviews_with_size[YEAR == 2019]
-
-# Mean assets by quality
-asset_by_quality <- reviews_2019[, .(
-  mean_asset = mean(ASSET, na.rm = TRUE),
-  median_asset = median(ASSET, na.rm = TRUE),
-  n = .N
-), by = app_quality]
-
-print(asset_by_quality)
-
-# Plot: Asset distribution by app quality
-ggplot(reviews_2019[ASSET > 0], aes(x = app_quality, y = log(ASSET))) +
-  geom_boxplot() +
-  labs(title = "Bank Size by App Quality (2019)",
-       x = "App Quality", y = "log(Assets)") +
-  theme_minimal()
-
-```
 
 # Correlation: Bank Size vs App Rating
 
@@ -342,7 +267,7 @@ penetration_time <- fdic_all[YEAR >= 2010 & !is.na(size_category), .(
 
 ggplot(penetration_time, aes(x = YEAR, y = pct_with_app, color = size_category)) +
   geom_line() +
-  labs(title = "App Penetration Rate by Bank Size Over Time",
+  labs(title = "% of Banks with App Reviews",
        x = "Year", y = "% of Banks with App Reviews", color = "Bank Size") +
   theme_minimal()
 
