@@ -1,26 +1,9 @@
----
-title: "Branch Panel (2010-2019): App Data Build + Regression"
-author: "Generated Output"
-format:
-  html:
-    self-contained: true
-    code-overflow: scroll
-    toc: true
-execute:
-  warning: false
-  echo: true
----
-
-
-
-```{r}
 rm(list=ls())
 library(data.table)
 library(stringr)
 library(fixest)
 library(DescTools)
 library(ggplot2)
-library(dplyr)
 
 # Load summary stats function
 source('https://raw.githubusercontent.com/dratnadiwakara/r-utilities/refs/heads/main/summary_stat_tables.R')
@@ -32,10 +15,7 @@ fdic_path      <- "C:/OneDrive/data/fdic_sod_2000_2025_simple.rds"
 
 start_year <- 2012
 end_year   <- 2019
-```
 
-
-```{r}
 #-----------------------------
 # 0) Load data
 #-----------------------------
@@ -53,27 +33,24 @@ app_panel <- app_panel[, .(
 )]
 
 app_panel[, has_app := fifelse(first_app_available == 1, 1L, 0L)]
-```
 
-
-```{r}
 #-----------------------------
 # 1) Branch-level lags/leads for growth
 #-----------------------------
 setorder(closure_raw, UNINUMBR, YEAR)
 
 closure_raw[, `:=`(
-  dep_lag1   = shift(DEPSUMBR, 1L, type = "lag"),
-  year_lag1  = shift(YEAR,    1L, type = "lag"),
-  dep_lead1  = shift(DEPSUMBR, 1L, type = "lead"),
-  year_lead1 = shift(YEAR,    1L, type = "lead")
+  dep_lag1  = shift(DEPSUMBR, 1L, type = "lag"),
+  year_lag1 = shift(YEAR,    1L, type = "lag"),
+  dep_lead3  = shift(DEPSUMBR, 3L, type = "lead"),
+  year_lead3 = shift(YEAR,    3L, type = "lead")
 ), by = UNINUMBR]
 
 closure_raw[, dep_lag1_aligned  := fifelse(year_lag1  == YEAR - 1L, dep_lag1,  NA_real_)]
-closure_raw[, dep_lead1_aligned := fifelse(year_lead1 == YEAR + 1L, dep_lead1, NA_real_)]
+closure_raw[, dep_lead3_aligned := fifelse(year_lead3 == YEAR + 3L, dep_lead3, NA_real_)]
 
 closure_raw[, gr_branch := fifelse(!is.na(dep_lag1_aligned) & dep_lag1_aligned > 0,
-                                   (dep_lead1_aligned - dep_lag1_aligned) / dep_lag1_aligned,
+                                   (dep_lead3_aligned - dep_lag1_aligned) / dep_lag1_aligned,
                                    NA_real_)]
 
 #-----------------------------
@@ -87,10 +64,7 @@ closure_app <- merge(
 )
 closure_app[is.na(has_app), has_app := 0L]
 closure_app[, own_bank_has_app := has_app]
-```
 
-
-```{r}
 #-----------------------------
 # 3) County-year closure shares and ABSOLUTE AMOUNTS
 #-----------------------------
@@ -116,12 +90,9 @@ county_closure_shares[, share_deps_closed_noapp :=
                         fifelse(total_deps_county_lag1 > 0, cl_closed_noapp / total_deps_county_lag1, 0)
 ]
 county_closure_shares[, share_deps_closed := share_deps_closed_app + share_deps_closed_noapp]
-```
 
-
-```{r}
 #-----------------------------
-# 4) County-year total deposits at t-1 and t+1
+# 4) County-year total deposits at t-1 and t+3
 #-----------------------------
 
 # Get county totals at each year (for all branches, including those that will close)
@@ -131,25 +102,22 @@ county_deps_all_years <- closure_app[, .(
 
 # For market share calculation, we need:
 # - Total at t-1 (includes all branches)
-# - Total at t+1 (includes only survivors - branches that exist at t+1)
+# - Total at t+3 (includes only survivors - branches that exist at t+3)
 
 # Create helper: mark branches that exist at each time point
 closure_app[, exists_t1 := !is.na(dep_lag1_aligned) & dep_lag1_aligned > 0]
-closure_app[, exists_lead1 := !is.na(dep_lead1_aligned) & dep_lead1_aligned > 0]
+closure_app[, exists_t3 := !is.na(dep_lead3_aligned) & dep_lead3_aligned > 0]
 
 # County totals at t-1 (all branches that existed then)
 county_deps_t1 <- closure_app[exists_t1 == TRUE, .(
   total_county_deps_t1 = sum_na_safe(dep_lag1_aligned)
 ), by = .(county, YEAR)]
 
-# County totals at t+1 (only survivors)
-county_deps_lead1 <- closure_app[exists_lead1 == TRUE, .(
-  total_county_deps_lead1 = sum_na_safe(dep_lead1_aligned)
+# County totals at t+3 (only survivors)
+county_deps_t3 <- closure_app[exists_t3 == TRUE, .(
+  total_county_deps_t3 = sum_na_safe(dep_lead3_aligned)
 ), by = .(county, YEAR)]
-```
 
-
-```{r}
 #-----------------------------
 # 5) Minimal county controls
 #-----------------------------
@@ -195,10 +163,7 @@ controls_cy <- merge(county_bankcounts[, .(county, YEAR, banks_county_lag1)],
 
 controls_cy <- merge(controls_cy, county_totals[, .(county, YEAR, total_deps_county_lag1)],
                      by = c("county","YEAR"), all.x = TRUE)
-```
 
-
-```{r}
 #-----------------------------
 # 6) Build regression branch panel
 #-----------------------------
@@ -220,14 +185,14 @@ branch_panel <- merge(branch_panel,
                       by = c("county","YEAR"),
                       all.x = TRUE)
 
-# Merge county totals at t-1 and t+1
+# Merge county totals at t-1 and t+3
 branch_panel <- merge(branch_panel,
                       county_deps_t1[, .(county, YEAR, total_county_deps_t1)],
                       by = c("county","YEAR"),
                       all.x = TRUE)
 
 branch_panel <- merge(branch_panel,
-                      county_deps_lead1[, .(county, YEAR, total_county_deps_lead1)],
+                      county_deps_t3[, .(county, YEAR, total_county_deps_t3)],
                       by = c("county","YEAR"),
                       all.x = TRUE)
 
@@ -241,18 +206,15 @@ branch_panel[, incumbent_bank := fifelse(bank_type == "INCUMBENT", 1L, 0L)]
 # Top 4 banks
 top4_cert <- c(628L, 3510L, 3511L, 7213L)
 branch_panel[, top4_bank := fifelse(CERT %in% top4_cert, 1L, 0L)]
-```
 
-
-```{r}
 #-----------------------------
 # 7) NEW: Calculate Market Share Changes
 #-----------------------------
 
-# Only keep branches that existed at BOTH t-1 and t+1 (survivors)
+# Only keep branches that existed at BOTH t-1 and t+3 (survivors)
 branch_panel <- branch_panel[
   !is.na(dep_lag1_aligned) & dep_lag1_aligned > 0 &
-    !is.na(dep_lead1_aligned) & dep_lead1_aligned > 0
+    !is.na(dep_lead3_aligned) & dep_lead3_aligned > 0
 ]
 
 # Market share at t-1 (among all branches that existed at t-1)
@@ -260,24 +222,28 @@ branch_panel[, mkt_share_t1 := fifelse(total_county_deps_t1 > 0,
                                        dep_lag1_aligned / total_county_deps_t1,
                                        NA_real_)]
 
-# Market share at t+1 (among only survivors)
-branch_panel[, mkt_share_lead1 := fifelse(total_county_deps_lead1 > 0,
-                                          dep_lead1_aligned / total_county_deps_lead1,
-                                          NA_real_)]
+# Market share at t+3 (among only survivors)
+branch_panel[, mkt_share_t3 := fifelse(total_county_deps_t3 > 0,
+                                       dep_lead3_aligned / total_county_deps_t3,
+                                       NA_real_)]
 
 # Change in market share (percentage points)
-branch_panel[, delta_mkt_share := mkt_share_lead1 - mkt_share_t1]
+branch_panel[, delta_mkt_share := mkt_share_t3 - mkt_share_t1]
 
+# Also calculate in basis points for easier interpretation
+branch_panel[, delta_mkt_share_bps := delta_mkt_share * 10000]
 
 # Winsorize
+branch_panel[, delta_mkt_share_bps := Winsorize(delta_mkt_share_bps, 
+                                                val = quantile(delta_mkt_share_bps, 
+                                                               probs = c(0.025, 0.975), 
+                                                               na.rm = TRUE))]
+
 branch_panel[, delta_mkt_share_win := Winsorize(delta_mkt_share, 
                                                 val = quantile(delta_mkt_share, 
                                                                probs = c(0.01, 0.99), 
                                                                na.rm = TRUE))]
-```
 
-
-```{r}
 #-----------------------------
 # 8) Final regression sample
 #-----------------------------
@@ -294,18 +260,10 @@ reg_dt <- branch_panel[
 cat("\n=== SUMMARY STATISTICS ===\n\n")
 
 # Histogram of market share change
-g1 <- (ggplot(reg_dt, aes(x = gr_branch)) + 
+print(ggplot(reg_dt, aes(x = delta_mkt_share_bps)) + 
         geom_histogram(bins = 50) +
-        labs(title = "Distribution of Deposit Growth",
-             x = "Deposit Growth",
-             y = "Count") +
-        geom_vline(xintercept = 0, color = "red", linetype = "dashed") +
-        theme_minimal())
-
-g2 <- (ggplot(reg_dt, aes(x = delta_mkt_share_win)) + 
-        geom_histogram(bins = 50) +
-        labs(title = "Distribution of Market Share Change",
-             x = "Change in Market Share",
+        labs(title = "Distribution of Market Share Change (basis points)",
+             x = "Change in Market Share (bps)",
              y = "Count") +
         geom_vline(xintercept = 0, color = "red", linetype = "dashed") +
         theme_minimal())
@@ -316,7 +274,7 @@ vars_mktshare <- c(
   "delta_mkt_share",
   "delta_mkt_share_bps",
   "mkt_share_t1",
-  "mkt_share_lead1",
+  "mkt_share_t3",
   "share_deps_closed_app",
   "share_deps_closed_noapp",
   "share_deps_closed",
@@ -349,11 +307,13 @@ reg_dt[share_deps_closed > 0, closure_quartile := cut(share_deps_closed,
                                                       labels = c("Q1", "Q2", "Q3", "Q4"),
                                                       include.lowest = TRUE)]
 
+temp <- reg_dt[!is.na(closure_quartile), .(
+  mean_delta_mkt_share_bps = mean(delta_mkt_share_bps, na.rm = TRUE),
+  median_delta_mkt_share_bps = median(delta_mkt_share_bps, na.rm = TRUE),
+  N = .N
+), by = closure_quartile]
+print(temp)
 
-```
-
-
-```{r}
 #-----------------------------
 # 10) Regressions
 #-----------------------------
@@ -362,7 +322,7 @@ setFixest_fml(
   ..fixef_branch = ~ UNINUMBR + state_yr + bank_yr,
   ..controls = ~ log1p(banks_county_lag1) +
     county_dep_growth_t4_t1 +
-    log1p(dep_lag1_aligned)
+    log1p(deps_lag1)
 )
 
 cat("\n\n=== ORIGINAL REGRESSIONS (Growth Rate) ===\n\n")
@@ -371,7 +331,7 @@ r_original <- list()
 r_original[[1]] <- feols(gr_branch ~ share_deps_closed + ..controls | ..fixef_branch,
                          data = reg_dt)
 
-r_original[[2]] <- feols(gr_branch ~ share_deps_closed * own_bank_has_app + ..controls | ..fixef_branch,
+r_original[[2]] <- feols(gr_branch ~ share_deps_closed * top4_bank + ..controls | ..fixef_branch,
                          data = reg_dt)
 
 r_original[[3]] <- feols(gr_branch ~ share_deps_closed_app + share_deps_closed_noapp + ..controls | ..fixef_branch,
@@ -382,24 +342,21 @@ r_original[[4]] <- feols(gr_branch ~ share_deps_closed_app * own_bank_has_app +
                            ..fixef_branch,
                          data = reg_dt)
 
-# r_original[[5]] <- feols(gr_branch ~ share_deps_closed_app * top4_bank +
-#                            share_deps_closed_noapp * top4_bank + ..controls |
-#                            ..fixef_branch,
-#                          data = reg_dt)
+r_original[[5]] <- feols(gr_branch ~ share_deps_closed_app * top4_bank +
+                           share_deps_closed_noapp * top4_bank + ..controls |
+                           ..fixef_branch,
+                         data = reg_dt)
 
-etable(r_original, headers = c("Total", "+ Own App", "CB App/NoApp", "+ Own App"))
-
-```
+etable(r_original, headers = c("Total","+ Top 4 Interaction", "CB App/NoApp", "+ Own App", "+ Top4 Bank"))
 
 
-```{r}
 cat("\n\n=== NEW REGRESSIONS (Market Share Change in Percentage Points) ===\n\n")
 
 r_mktshare <- list()
 r_mktshare[[1]] <- feols(delta_mkt_share_win ~ share_deps_closed + ..controls | ..fixef_branch,
                          data = reg_dt)
 
-r_mktshare[[2]] <- feols(delta_mkt_share_win ~ share_deps_closed * own_bank_has_app + ..controls | ..fixef_branch,
+r_mktshare[[2]] <- feols(delta_mkt_share_win ~ share_deps_closed * top4_bank + ..controls | ..fixef_branch,
                          data = reg_dt)
 
 r_mktshare[[3]] <- feols(delta_mkt_share_win ~ share_deps_closed_app + share_deps_closed_noapp + ..controls | ..fixef_branch,
@@ -409,31 +366,58 @@ r_mktshare[[4]] <- feols(delta_mkt_share_win ~ share_deps_closed_app * own_bank_
                            share_deps_closed_noapp * own_bank_has_app + ..controls |
                            ..fixef_branch,
                          data = reg_dt)
-# 
-# r_mktshare[[5]] <- feols(delta_mkt_share_win ~ share_deps_closed_app * top4_bank +
-#                            share_deps_closed_noapp * top4_bank + ..controls |
-#                            ..fixef_branch,
-#                          data = reg_dt)
 
-etable(r_mktshare, headers = c("Total", "+ Own App", "CB App/NoApp", "+ Own App"))
-```
+r_mktshare[[5]] <- feols(delta_mkt_share_win ~ share_deps_closed_app * top4_bank +
+                           share_deps_closed_noapp * top4_bank + ..controls |
+                           ..fixef_branch,
+                         data = reg_dt)
 
+etable(r_mktshare, headers = c("Total","+ Top 4 Interaction", "CB App/NoApp", "+ Own App", "+ Top4 Bank"))
 
 
+cat("\n\n=== NEW REGRESSIONS (Market Share Change in Basis Points) ===\n\n")
+
+r_mktshare_bps <- list()
+r_mktshare_bps[[1]] <- feols(delta_mkt_share_bps ~ share_deps_closed + ..controls | ..fixef_branch,
+                             data = reg_dt)
+
+r_mktshare_bps[[2]] <- feols(delta_mkt_share_bps ~ share_deps_closed * top4_bank + ..controls | ..fixef_branch,
+                             data = reg_dt)
+
+r_mktshare_bps[[3]] <- feols(delta_mkt_share_bps ~ share_deps_closed_app + share_deps_closed_noapp + ..controls | ..fixef_branch,
+                             data = reg_dt)
+
+r_mktshare_bps[[4]] <- feols(delta_mkt_share_bps ~ share_deps_closed_app * own_bank_has_app +
+                               share_deps_closed_noapp * own_bank_has_app + ..controls |
+                               ..fixef_branch,
+                             data = reg_dt)
+
+r_mktshare_bps[[5]] <- feols(delta_mkt_share_bps ~ share_deps_closed_app * top4_bank +
+                               share_deps_closed_noapp * top4_bank + ..controls |
+                               ..fixef_branch,
+                             data = reg_dt)
+
+etable(r_mktshare_bps, headers = c("Total","+ Top 4 Interaction", "CB App/NoApp", "+ Own App", "+ Top4 Bank"))
 
 
+cat("\n\n=== INTERPRETATION GUIDE ===\n")
+cat("
+Market Share Change Interpretation:
+- Positive coefficient = branch GAINS market share when closures occur
+- Coefficient magnitude = percentage point (or bps) change in market share
+  per 1 percentage point increase in closure share
 
+Example (basis points version):
+- Coefficient of 50 on share_deps_closed means:
+  If 10% of county deposits close (share_deps_closed = 0.10),
+  average survivor gains 5 basis points (0.10 × 50) of market share
 
+Key Questions:
+1. Do closures lead to market share gains? (positive coefficients)
+2. Are gains larger from non-app vs app closures?
+3. Do Top 4 banks gain more/less market share?
+4. Does having your own app help you gain market share?
 
-
-
-
-
-
-
-
-
-
-
-
-
+Note: This specification only includes branches that survive from t-1 to t+3,
+so market shares are calculated among survivors only.
+")
