@@ -11,9 +11,11 @@ library(readxl)
 library(dplyr)
 
 # --- Load and process app reviews -------------------------------------------
+# Aggregate to bank-year level with weighted average by reviews_count
 reviews <- fread("C:/OneDrive/data/CH_app_reviews_data.csv")
-reviews <- reviews[, .(mean_app_rating = mean(rating, na.rm = TRUE)), 
-                   by = .(FDIC_certificate_id, review_year)]
+reviews <- reviews[reviews_available == 1, .(
+  mean_app_rating = sum(rating * reviews_count, na.rm = TRUE) / sum(reviews_count, na.rm = TRUE)
+), by = .(FDIC_certificate_id, review_year)]
 reviews[, app_rating_bin := ntile(mean_app_rating, 4), by = review_year]
 setnames(reviews, c("FDIC_certificate_id", "review_year"), c("CERT", "YEAR"))
 
@@ -76,81 +78,69 @@ bank_zip_year <- closure_raw[, .(
 
 
 # --- Competitor closure deposit share (using t-1 deposits) -----------------
-# Split by app rating bin (0, 1, 2, 3, 4)
+# Group into 3 categories: no app (0), low app (1-2), high app (3-4)
 
 # ZIP total dep_{t-1}
 zip_dep_tminus1 <- closure_raw[, .(
   zip_dep_tminus1 = sum_na_safe(dep_lag1_aligned)
 ), by = .(zip, YEAR)]
 
-# Own bank's closed branch deposits (t-1) by app rating bin
-own_close_dep_by_bin <- closure_raw[closed == 1L, .(
-  own_close_bin0 = sum_na_safe(fifelse(app_rating_bin == 0L, dep_lag1_aligned, NA_real_)),
-  own_close_bin1 = sum_na_safe(fifelse(app_rating_bin == 1L, dep_lag1_aligned, NA_real_)),
-  own_close_bin2 = sum_na_safe(fifelse(app_rating_bin == 2L, dep_lag1_aligned, NA_real_)),
-  own_close_bin3 = sum_na_safe(fifelse(app_rating_bin == 3L, dep_lag1_aligned, NA_real_)),
-  own_close_bin4 = sum_na_safe(fifelse(app_rating_bin == 4L, dep_lag1_aligned, NA_real_))
+# Own bank's closed branch deposits (t-1) by app rating group
+own_close_dep_by_group <- closure_raw[closed == 1L, .(
+  own_close_no_app = sum_na_safe(fifelse(app_rating_bin == 0L, dep_lag1_aligned, NA_real_)),
+  own_close_low_app = sum_na_safe(fifelse(app_rating_bin %in% c(1L, 2L), dep_lag1_aligned, NA_real_)),
+  own_close_high_app = sum_na_safe(fifelse(app_rating_bin %in% c(3L, 4L), dep_lag1_aligned, NA_real_))
 ), by = .(RSSDID, zip, YEAR)]
 
-# Total closed deposits in ZIP (all banks) by app rating bin
-zip_close_dep_by_bin <- closure_raw[closed == 1L, .(
-  zip_close_bin0 = sum_na_safe(fifelse(app_rating_bin == 0L, dep_lag1_aligned, NA_real_)),
-  zip_close_bin1 = sum_na_safe(fifelse(app_rating_bin == 1L, dep_lag1_aligned, NA_real_)),
-  zip_close_bin2 = sum_na_safe(fifelse(app_rating_bin == 2L, dep_lag1_aligned, NA_real_)),
-  zip_close_bin3 = sum_na_safe(fifelse(app_rating_bin == 3L, dep_lag1_aligned, NA_real_)),
-  zip_close_bin4 = sum_na_safe(fifelse(app_rating_bin == 4L, dep_lag1_aligned, NA_real_))
+# Total closed deposits in ZIP (all banks) by app rating group
+zip_close_dep_by_group <- closure_raw[closed == 1L, .(
+  zip_close_no_app = sum_na_safe(fifelse(app_rating_bin == 0L, dep_lag1_aligned, NA_real_)),
+  zip_close_low_app = sum_na_safe(fifelse(app_rating_bin %in% c(1L, 2L), dep_lag1_aligned, NA_real_)),
+  zip_close_high_app = sum_na_safe(fifelse(app_rating_bin %in% c(3L, 4L), dep_lag1_aligned, NA_real_))
 ), by = .(zip, YEAR)]
 
 # Merge into bank_zip_year
-bank_zip_year <- merge(bank_zip_year, own_close_dep_by_bin,
+bank_zip_year <- merge(bank_zip_year, own_close_dep_by_group,
                        by = c("RSSDID", "zip", "YEAR"), all.x = TRUE)
 
 # Fill NAs with 0 for own closures
-for (col in c("own_close_bin0", "own_close_bin1", "own_close_bin2", "own_close_bin3", "own_close_bin4")) {
+for (col in c("own_close_no_app", "own_close_low_app", "own_close_high_app")) {
   set(bank_zip_year, i = which(is.na(bank_zip_year[[col]])), j = col, value = 0)
 }
 
-bank_zip_year <- merge(bank_zip_year, zip_close_dep_by_bin,
+bank_zip_year <- merge(bank_zip_year, zip_close_dep_by_group,
                        by = c("zip", "YEAR"), all.x = TRUE)
 
 # Fill NAs with 0 for ZIP closures
-for (col in c("zip_close_bin0", "zip_close_bin1", "zip_close_bin2", "zip_close_bin3", "zip_close_bin4")) {
+for (col in c("zip_close_no_app", "zip_close_low_app", "zip_close_high_app")) {
   set(bank_zip_year, i = which(is.na(bank_zip_year[[col]])), j = col, value = 0)
 }
 
-# Compute competitor closed deposits by bin (ZIP total - own)
+# Compute competitor closed deposits by group (ZIP total - own)
 bank_zip_year[, `:=`(
-  competitor_close_bin0 = pmax(zip_close_bin0 - own_close_bin0, 0),
-  competitor_close_bin1 = pmax(zip_close_bin1 - own_close_bin1, 0),
-  competitor_close_bin2 = pmax(zip_close_bin2 - own_close_bin2, 0),
-  competitor_close_bin3 = pmax(zip_close_bin3 - own_close_bin3, 0),
-  competitor_close_bin4 = pmax(zip_close_bin4 - own_close_bin4, 0)
+  competitor_close_no_app = pmax(zip_close_no_app - own_close_no_app, 0),
+  competitor_close_low_app = pmax(zip_close_low_app - own_close_low_app, 0),
+  competitor_close_high_app = pmax(zip_close_high_app - own_close_high_app, 0)
 )]
 
 bank_zip_year <- merge(bank_zip_year, zip_dep_tminus1,
                        by = c("zip", "YEAR"), all.x = TRUE)
 
-# Competitor closure deposit shares by app rating bin
+# Competitor closure deposit shares by app rating group (3 categories with similar scale)
 bank_zip_year[, `:=`(
-  competitor_close_dep_share_bin0 = fifelse(!is.na(zip_dep_tminus1) & zip_dep_tminus1 > 0,
-                                            competitor_close_bin0 / zip_dep_tminus1, 0),
-  competitor_close_dep_share_bin1 = fifelse(!is.na(zip_dep_tminus1) & zip_dep_tminus1 > 0,
-                                            competitor_close_bin1 / zip_dep_tminus1, 0),
-  competitor_close_dep_share_bin2 = fifelse(!is.na(zip_dep_tminus1) & zip_dep_tminus1 > 0,
-                                            competitor_close_bin2 / zip_dep_tminus1, 0),
-  competitor_close_dep_share_bin3 = fifelse(!is.na(zip_dep_tminus1) & zip_dep_tminus1 > 0,
-                                            competitor_close_bin3 / zip_dep_tminus1, 0),
-  competitor_close_dep_share_bin4 = fifelse(!is.na(zip_dep_tminus1) & zip_dep_tminus1 > 0,
-                                            competitor_close_bin4 / zip_dep_tminus1, 0)
+  competitor_close_share_no_app = fifelse(!is.na(zip_dep_tminus1) & zip_dep_tminus1 > 0,
+                                          competitor_close_no_app / zip_dep_tminus1, 0),
+  competitor_close_share_low_app = fifelse(!is.na(zip_dep_tminus1) & zip_dep_tminus1 > 0,
+                                           competitor_close_low_app / zip_dep_tminus1, 0),
+  competitor_close_share_high_app = fifelse(!is.na(zip_dep_tminus1) & zip_dep_tminus1 > 0,
+                                            competitor_close_high_app / zip_dep_tminus1, 0)
 )]
 
-# Total competitor closure share (sum of all bins)
+# Total competitor closure share (sum of all groups)
 bank_zip_year[, competitor_close_dep_share_prev := 
-  competitor_close_dep_share_bin0 + 
-  competitor_close_dep_share_bin1 + 
-  competitor_close_dep_share_bin2 + 
-  competitor_close_dep_share_bin3 + 
-  competitor_close_dep_share_bin4]
+  competitor_close_share_no_app + 
+  competitor_close_share_low_app + 
+  competitor_close_share_high_app]
 
 
 # --- Merge back to branch level ---------------------------------------------
@@ -158,11 +148,9 @@ closure_raw <- merge(
   closure_raw,
   bank_zip_year[, .(RSSDID, zip, YEAR, own_closures_zip, own_openings_zip,
                     competitor_close_dep_share_prev,
-                    competitor_close_dep_share_bin0,
-                    competitor_close_dep_share_bin1,
-                    competitor_close_dep_share_bin2,
-                    competitor_close_dep_share_bin3,
-                    competitor_close_dep_share_bin4)],
+                    competitor_close_share_no_app,
+                    competitor_close_share_low_app,
+                    competitor_close_share_high_app)],
   by = c("RSSDID", "zip", "YEAR"),
   all.x = TRUE
 )

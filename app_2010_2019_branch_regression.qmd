@@ -1,0 +1,294 @@
+---
+title: "Branch Panel (2010-2019): App Data Build + Regression"
+author: "Generated Output"
+format:
+  html:
+    self-contained: true
+    code-overflow: scroll
+    toc: true
+execute:
+  warning: false
+  echo: true
+---
+```{r}
+rm(list=ls())
+library(data.table)
+library(stringr)
+library(fixest)
+library(DescTools)
+library(ggplot2)
+
+# Load summary stats function
+source('https://raw.githubusercontent.com/dratnadiwakara/r-utilities/refs/heads/main/summary_stat_tables.R')
+
+# Inputs (adjust paths)
+closure_path   <- "C:/OneDrive/data/closure_opening_data_simple.rds"
+app_panel_path <- "C:/OneDrive/data/CH_full_app_reviews_panel.csv"
+fdic_path      <- "C:/OneDrive/data/fdic_sod_2000_2025_simple.rds"
+
+start_year <- 2012
+end_year   <- 2019
+```
+
+```{r}
+#-----------------------------
+# 0) Load data
+#-----------------------------
+closure_raw <- readRDS(closure_path); setDT(closure_raw)
+closure_raw[, county := str_pad(STCNTYBR, 5, "left", "0")]
+closure_raw[, YEAR := as.integer(YEAR)]
+
+app_panel <- fread(app_panel_path); setDT(app_panel)
+app_panel <- app_panel[, .(
+  CERT = FDIC_certificate_id,
+  YEAR = as.integer(year),
+  first_app_available,    
+  reviews_available,
+  yearly_rating
+)]
+
+app_panel[, has_app := fifelse(first_app_available == 1, 1L, 0L)]
+
+#-----------------------------
+# 1) Branch-level lags/leads for growth
+#-----------------------------
+setorder(closure_raw, UNINUMBR, YEAR)
+
+closure_raw[, `:=`(
+  dep_lag1  = shift(DEPSUMBR, 1L, type = "lag"),
+  year_lag1 = shift(YEAR,    1L, type = "lag"),
+  dep_lead3  = shift(DEPSUMBR, 3L, type = "lead"),
+  year_lead3 = shift(YEAR,    3L, type = "lead")
+), by = UNINUMBR]
+
+closure_raw[, dep_lag1_aligned  := fifelse(year_lag1  == YEAR - 1L, dep_lag1,  NA_real_)]
+closure_raw[, dep_lead3_aligned := fifelse(year_lead3 == YEAR + 3L, dep_lead3, NA_real_)]
+
+closure_raw[, gr_branch := fifelse(!is.na(dep_lag1_aligned) & dep_lag1_aligned > 0,
+                                  (dep_lead3_aligned - dep_lag1_aligned) / dep_lag1_aligned,
+                                  NA_real_)]
+
+#-----------------------------
+# 2) Merge bank-year app indicator onto branch-year
+#-----------------------------
+closure_app <- merge(
+  closure_raw,
+  app_panel[, .(CERT, YEAR, has_app)],
+  by = c("CERT", "YEAR"),
+  all.x = TRUE
+)
+closure_app[is.na(has_app), has_app := 0L]
+closure_app[, own_bank_has_app := has_app]
+```
+
+
+```{r}
+#-----------------------------
+# 3) County-year closure shares split by app vs no-app (uses lagged deposits like your code)
+#-----------------------------
+sum_na_safe <- function(x) if (all(is.na(x))) NA_real_ else as.numeric(sum(x, na.rm = TRUE))
+
+county_totals <- closure_app[, .(
+  total_deps_county_lag1 = sum_na_safe(dep_lag1_aligned)
+), by = .(county, YEAR)]
+
+closed_by_app <- closure_app[closed == 1L, .(
+  cl_closed_app   = sum_na_safe(fifelse(has_app == 1L, dep_lag1_aligned, NA_real_)),
+  cl_closed_noapp = sum_na_safe(fifelse(has_app == 0L, dep_lag1_aligned, NA_real_))
+), by = .(county, YEAR)]
+
+county_closure_shares <- merge(county_totals, closed_by_app, by = c("county","YEAR"), all.x = TRUE)
+county_closure_shares[is.na(cl_closed_app),   cl_closed_app   := 0]
+county_closure_shares[is.na(cl_closed_noapp), cl_closed_noapp := 0]
+
+county_closure_shares[, share_deps_closed_app :=
+  fifelse(total_deps_county_lag1 > 0, cl_closed_app / total_deps_county_lag1, 0)
+]
+county_closure_shares[, share_deps_closed_noapp :=
+  fifelse(total_deps_county_lag1 > 0, cl_closed_noapp / total_deps_county_lag1, 0)
+]
+county_closure_shares[, share_deps_closed := share_deps_closed_app + share_deps_closed_noapp]
+```
+
+
+```{r}
+#-----------------------------
+# 4) Minimal county controls needed by your regressions
+#   - banks_county_lag1
+#   - deps_lag1 (county total deposits lagged)
+#   - county_dep_growth_t4_t1 (growth from t-4 to t-1)
+#   - incumbent_mkt_share_lag1_all (incumbent share, defined as banks with n_close==0)
+#-----------------------------
+
+# 4a) Build bank-county-year totals (to define "incumbent")
+bank_cty_yr <- closure_app[, .(
+  deps_curr = sum_na_safe(DEPSUMBR),
+  deps_lag1 = sum_na_safe(dep_lag1_aligned),
+  n_close   = sum(closed == 1L, na.rm = TRUE)
+), by = .(RSSDID, county, YEAR)]
+
+bank_cty_yr[, bank_type := fifelse(n_close > 0L, "CLOSER", "INCUMBENT")]
+
+
+# 4b) County-year counts of banks (lagged)
+county_bankcounts <- bank_cty_yr[, .(
+  banks_county_curr = .N
+), by = .(county, YEAR)]
+setorder(county_bankcounts, county, YEAR)
+county_bankcounts[, banks_county_lag1 := shift(banks_county_curr, 1L, type = "lag"), by = county]
+
+# 4c) County deposit totals from FDIC SoD (for deps_lag1 and t-4..t-1 growth)
+fdic_all <- readRDS(fdic_path); setDT(fdic_all)
+fdic_all[, county := str_pad(STCNTYBR, 5, "left", "0")]
+fdic_all[, YEAR := as.integer(YEAR)]
+
+market_totals <- fdic_all[, .(total_deps = sum(DEPSUMBR, na.rm = TRUE)), by = .(county, YEAR)]
+complete_grid <- CJ(county = unique(market_totals$county),
+                    YEAR   = min(market_totals$YEAR):max(market_totals$YEAR))
+market_bal <- merge(complete_grid, market_totals, by = c("county","YEAR"), all.x = TRUE)
+market_bal[is.na(total_deps), total_deps := 0]
+setorder(market_bal, county, YEAR)
+
+market_bal[, deps_lag1 := shift(total_deps, 1L, type = "lag"), by = county]
+market_bal[, deps_lag4 := shift(total_deps, 4L, type = "lag"), by = county]
+market_bal[, county_dep_growth_t4_t1 := fifelse(deps_lag4 > 0,
+                                               (deps_lag1 - deps_lag4) / deps_lag4,
+                                               NA_real_)]
+
+# 4d) Combine controls into one county-year table
+controls_cy <- merge(county_bankcounts[, .(county, YEAR, banks_county_lag1)],
+                     market_bal[, .(county, YEAR, deps_lag1, county_dep_growth_t4_t1)],
+                     by = c("county","YEAR"), all.x = TRUE)
+
+controls_cy <- merge(controls_cy, county_totals[, .(county, YEAR, total_deps_county_lag1)],
+                     by = c("county","YEAR"), all.x = TRUE)
+
+
+```
+
+
+```{r}
+#-----------------------------
+# 5) Build regression branch panel and reg_dt sample
+#-----------------------------
+branch_panel <- closure_app[!is.na(gr_branch)]
+branch_panel[,gr_branch:=Winsorize(gr_branch, val = quantile(gr_branch, probs = c(0.025, 0.975), na.rm = FALSE))]
+branch_panel[, state_yr := paste0(substr(county, 1, 2), YEAR)]
+branch_panel[, bank_yr := paste0(RSSDID, YEAR)]
+
+branch_panel <- merge(branch_panel,
+                      county_closure_shares[, .(county, YEAR, share_deps_closed, share_deps_closed_app, share_deps_closed_noapp)],
+                      by = c("county","YEAR"),
+                      all.x = TRUE)
+
+branch_panel <- merge(branch_panel,
+                      controls_cy[, .(county, YEAR, banks_county_lag1, county_dep_growth_t4_t1,
+                                      deps_lag1)],
+                      by = c("county","YEAR"),
+                      all.x = TRUE)
+
+# Incumbent indicator at bank-county-year level (same definition as above)
+branch_panel <- merge(branch_panel,
+                      bank_cty_yr[, .(RSSDID, county, YEAR, bank_type)],
+                      by = c("RSSDID","county","YEAR"),
+                      all.x = TRUE)
+branch_panel[, incumbent_bank := fifelse(bank_type == "INCUMBENT", 1L, 0L)]
+
+# Top 4 banks (large banks by CERT)
+top4_cert <- c(628L, 3510L, 3511L, 7213L)
+branch_panel[, top4_bank := fifelse(CERT %in% top4_cert, 1L, 0L)]
+
+# Final regression sample (same filters as your regression chunk)
+reg_dt <- branch_panel[
+  YEAR >= start_year & YEAR <= end_year &
+  banks_county_lag1 >= 3 &
+  incumbent_bank == 1
+]
+
+```
+
+# Summary Statistics
+
+```{r}
+ggplot(reg_dt,aes(x=gr_branch))+geom_histogram()
+```
+
+
+```{r}
+#| warning: false
+#| messages: false
+
+vars <- c(
+  "gr_branch",
+  "share_deps_closed",
+  "share_deps_closed_app",
+  "share_deps_closed_noapp",
+  "own_bank_has_app",
+  "banks_county_lag1",
+  "county_dep_growth_t4_t1",
+  "deps_lag1"
+)
+vars <- intersect(vars, names(reg_dt))
+```
+
+## Summary Stats for All years
+
+```{r}
+#| warning: false
+#| messages: false
+
+temp <- summary_stats_function(reg_dt, vars)
+md_table(temp)
+
+
+temp <- summary_stats_function(reg_dt[share_deps_closed>0], vars)
+md_table(temp)
+```
+
+## Summary Stats for 2019
+
+```{r}
+#| warning: false
+#| messages: false
+
+temp <- summary_stats_function(reg_dt[YEAR == 2019], vars)
+md_table(temp)
+```
+
+```{r}
+#-----------------------------
+# 6) Run the regressions
+#-----------------------------
+
+setFixest_fml(
+  ..fixef_branch = ~ UNINUMBR + state_yr + bank_yr,
+  ..controls = ~ log1p(banks_county_lag1) +
+             county_dep_growth_t4_t1 +
+             log1p(deps_lag1) 
+             
+)
+
+
+
+
+r <- list()
+r[[1]] <- feols(gr_branch ~ share_deps_closed + ..controls | ..fixef_branch,
+                data = reg_dt)
+
+r[[2]] <- feols(gr_branch ~ share_deps_closed + ..controls | ..fixef_branch,
+                data = reg_dt)
+
+r[[3]] <- feols(gr_branch ~ share_deps_closed_app + share_deps_closed_noapp + ..controls | ..fixef_branch,
+                data = reg_dt)
+r[[4]] <- feols(gr_branch ~ share_deps_closed_app * own_bank_has_app +
+                            share_deps_closed_noapp * own_bank_has_app + ..controls |
+                            ..fixef_branch,
+                data = reg_dt)
+r[[5]] <- feols(gr_branch ~ share_deps_closed_app * top4_bank +
+                            share_deps_closed_noapp * top4_bank + ..controls |
+                            ..fixef_branch,
+                data = reg_dt)
+
+etable(r, headers = c("Total", "CB App/NoApp", "+ Own App", "+ Top4 Bank"))
+```
+

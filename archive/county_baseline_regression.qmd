@@ -22,6 +22,10 @@ execute:
 rm(list=ls())
 library(data.table)
 library(fixest)
+library(DescTools)
+library(dplyr)
+# Load summary stats function
+source('https://raw.githubusercontent.com/dratnadiwakara/r-utilities/refs/heads/main/summary_stat_tables.R')
 
 # Path must match the output of build_minimal_county_panel.R.
 panel_path <- "C:/OneDrive/data/county_coexistence_panel_slim.rds"
@@ -46,6 +50,61 @@ dt[, (winsor_vars) := lapply(.SD, function(x) {
 
 ```
 
+# Summary Statistics
+
+## Summary Stats for 2019 (Full Sample)
+
+```{r}
+#| warning: false
+#| messages: false
+
+# -----------------------------------------------------------------------------
+# SUMMARY STATISTICS
+# -----------------------------------------------------------------------------
+# Purpose: Generate summary stats for all variables used in the regression analysis.
+# -----------------------------------------------------------------------------
+
+vars <- c(
+  # --- Dependent Variable ---
+  "gr_3y_cd_all",           # 3-year deposit growth (All Incumbents)
+  
+  # --- Shock Variable ---
+  "share_deps_closed_all",  # Share of deposits in closed branches
+  
+  # --- Market Controls ---
+  "incumbent_mkt_share_lag1_all",  # Incumbent market share (lag)
+  "branches_county_lag1",          # Number of branches (lag)
+  "deps_lag1",                     # Total market deposits (lag)
+  "county_dep_growth_t4_t1",       # Pre-trend growth
+  
+  # --- Demographics ---
+  "sophisticated",           # Binary: sophisticated county
+  "above_median_age",        # Binary: above median age
+  "above_median_income"      # Binary: above median income
+)
+
+# Table 1: Summary Stats for 2019 (Full Sample)
+temp <- summary_stats_function(dt[YEAR == 2019], vars)
+md_table(temp)
+
+```
+
+## Summary Stats for 2019 (Conditioned on Non-Zero Closure Shock)
+
+```{r}
+#| warning: false
+#| messages: false
+
+# Table 2: Summary Stats for 2019 (Conditioned on Non-Zero Closure Shock)
+# Shows stats specifically for counties affected by closures
+temp <- summary_stats_function(dt[YEAR == 2019 & share_deps_closed_all > 0], vars)
+md_table(temp)
+
+```
+
+# Regression Analysis
+
+## Define Fixed Effects and Formulas
 
 ```{r}
 #| warning: false
@@ -63,6 +122,9 @@ setFixest_fml(
 
 ```
 
+## Baseline Effects
+
+Test the impact of closure shocks on incumbent deposit growth.
 
 ```{r}
 #| warning: false
@@ -77,6 +139,10 @@ md_table(etable(r,
                 signif.code = c("***" = 0.01, "**" = 0.05, "*" = 0.10),
                 headers = c("Full Main", "Pre-12 Main", "Post-12 Main")))
 ```
+
+## Demographic Interactions
+
+Test whether effects vary by county demographics (sophistication, age, income).
 
 ```{r}
 #| warning: false

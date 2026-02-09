@@ -10,7 +10,10 @@ library(stringr)
 library(dplyr)
 
 reviews <- fread("C:/OneDrive/data/CH_app_reviews_data.csv")
-reviews <- reviews[,.(mean_app_rating=mean(rating,na.rm=T)),by=.(FDIC_certificate_id,review_year)]
+# Aggregate to bank-year level with weighted average by reviews_count
+reviews <- reviews[reviews_available == 1, .(
+  mean_app_rating = sum(rating * reviews_count, na.rm = TRUE) / sum(reviews_count, na.rm = TRUE)
+), by = .(FDIC_certificate_id, review_year)]
 reviews[,app_rating_bin:=ntile(mean_app_rating,4),by=review_year]
 setnames(reviews, c("FDIC_certificate_id", "review_year"), c("CERT", "YEAR"))
 

@@ -1,0 +1,188 @@
+---
+title: "Bank App Reviews Panel: Descriptive Analysis"
+author: "Generated Output"
+format:
+  html:
+    self-contained: true
+    code-overflow: scroll
+    toc: true
+execute:
+  warning: false
+  echo: true
+---
+
+Analysis of bank mobile app reviews using the full panel dataset (FDIC_certificate_id x year).
+
+# Setup
+
+```{r}
+#| warning: false
+#| messages: false
+
+rm(list=ls())
+library(data.table)
+library(ggplot2)
+library(gridExtra)
+
+options(device = "windows")  # Ensure plots show in popup windows
+
+# Load the new panel dataset
+panel <- fread("C:/OneDrive/data/CH_full_app_reviews_panel.csv")
+setDT(panel)
+
+# Create size categories based on tot_assets (in thousands)
+# Assuming tot_assets is in thousands like FDIC data
+panel[, size_category := fifelse(tot_assets >= 10000000, "Large (>$10B)",
+                                  fifelse(tot_assets >= 1000000, "Medium ($1B-$10B)",
+                                         fifelse(tot_assets > 0, "Small (<$1B)", NA_character_)))]
+
+# Create a flag for banks that ever have reviews available
+banks_with_reviews_ever <- unique(panel[reviews_available == 1, FDIC_certificate_id])
+panel[, has_review_ever := fifelse(FDIC_certificate_id %in% banks_with_reviews_ever, 1L, 0L)]
+
+# Summary statistics
+cat("Panel dimensions:\n")
+cat("- Years covered:", min(panel$year, na.rm = TRUE), "to", max(panel$year, na.rm = TRUE), "\n")
+cat("- Unique banks:", uniqueN(panel$FDIC_certificate_id), "\n")
+cat("- Total observations:", nrow(panel), "\n\n")
+
+```
+# App Availability Over Time
+
+```{r}
+#| warning: false
+#| messages: false
+
+# App availability by year
+app_coverage_time <- panel[!is.na(year), .(
+  n_banks = uniqueN(FDIC_certificate_id),
+  n_with_app = uniqueN(FDIC_certificate_id[first_app_available == 1]),
+  n_with_reviews = uniqueN(FDIC_certificate_id[reviews_available == 1]),
+  total_assets = sum(tot_assets, na.rm = TRUE),
+  assets_with_app = sum(tot_assets[first_app_available == 1], na.rm = TRUE),
+  assets_with_reviews = sum(tot_assets[reviews_available == 1], na.rm = TRUE)
+), by = year]
+
+app_coverage_time[, pct_banks_with_app := 100 * n_with_app / n_banks]
+app_coverage_time[, pct_banks_with_reviews := 100 * n_with_reviews / n_banks]
+app_coverage_time[, pct_assets_with_app := 100 * assets_with_app / total_assets]
+app_coverage_time[, pct_assets_with_reviews := 100 * assets_with_reviews / total_assets]
+
+# Plot: App and review coverage over time (by number of banks)
+g1 <- ggplot(app_coverage_time[year >= 2012 & year <= 2021], aes(x = year)) +
+  geom_line(aes(y = pct_banks_with_app, color = "Has App"), linewidth = 1) +
+  geom_line(aes(y = pct_banks_with_reviews, color = "Has Reviews"), linewidth = 1) +
+  labs(title = "App and Review Coverage Over Time (% of Banks)",
+       x = "Year", y = "Percent of Banks", color = "Status") +
+  theme_minimal() +
+  scale_color_manual(values = c("Has App" = "blue", "Has Reviews" = "darkgreen"))
+
+```
+
+```{r}
+#| warning: false
+#| messages: false
+
+# Plot: App and review coverage over time (by assets)
+g2 <- ggplot(app_coverage_time[year >= 2012 & year <= 2021], aes(x = year)) +
+  geom_line(aes(y = pct_assets_with_reviews, color = "Has Reviews"), linewidth = 1) +
+  labs(title = "App and Review Coverage Over Time (% of Total Assets)",
+       x = "Year", y = "Percent of Assets", color = "Status") +
+  theme_minimal() +
+  scale_color_manual(values = c("Has App" = "blue", "Has Reviews" = "darkgreen"))
+
+grid.arrange(g1,g2,nrow=1)
+
+```
+
+# Coverage by Bank Size
+
+```{r}
+#| warning: false
+#| messages: false
+
+# App and review coverage by size category (2021)
+coverage_by_size <- panel[year == 2021 & !is.na(size_category), .(
+  n_banks = uniqueN(FDIC_certificate_id),
+  n_with_app = uniqueN(FDIC_certificate_id[first_app_available == 1]),
+  n_with_reviews = uniqueN(FDIC_certificate_id[reviews_available == 1])
+), by = size_category]
+
+coverage_by_size[, pct_with_app := 100 * n_with_app / n_banks]
+coverage_by_size[, pct_with_reviews := 100 * n_with_reviews / n_banks]
+
+print(coverage_by_size[order(-pct_with_app)])
+
+# Bar plot
+coverage_long <- melt(coverage_by_size[, .(size_category, pct_with_app, pct_with_reviews)],
+                      id.vars = "size_category",
+                      variable.name = "metric",
+                      value.name = "percentage")
+
+coverage_long[, metric := fifelse(metric == "pct_with_app", "Has App", "Has Reviews")]
+
+ggplot(coverage_long, aes(x = size_category, y = percentage, fill = metric)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), 
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 3) +
+  labs(title = "App and Review Coverage by Bank Size (2021)",
+       x = "Bank Size", y = "Percentage", fill = "Status") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Has App" = "steelblue", "Has Reviews" = "darkgreen"))
+
+```
+
+# Rating Analysis
+
+```{r}
+#| warning: false
+#| messages: false
+
+# Average yearly rating by size category over time
+rating_by_size_year <- panel[reviews_available == 1 & !is.na(yearly_rating) & !is.na(size_category), .(
+  mean_rating = mean(yearly_rating, na.rm = TRUE),
+  median_rating = median(yearly_rating, na.rm = TRUE),
+  n_banks = uniqueN(FDIC_certificate_id)
+), by = .(year, size_category)]
+
+# Plot: Mean yearly rating over time
+ggplot(rating_by_size_year[year >= 2012 & year <= 2021], 
+       aes(x = year, y = mean_rating, color = size_category)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  labs(title = "Mean App Rating by Bank Size Over Time (Yearly Ratings)",
+       x = "Year", y = "Mean Yearly Rating", color = "Bank Size") +
+  theme_minimal() +
+  ylim(1, 5)
+
+```
+
+```{r}
+#| warning: false
+#| messages: false
+
+# Specific banks analysis: 628 and 3510
+specific_banks <- panel[FDIC_certificate_id %in% c(628, 3510) & 
+                        year >= 2012 & 
+                        !is.na(yearly_rating)]
+
+# Get bank names for better labels
+bank_info <- specific_banks[, .(
+  institution_name = first(institution_name),
+  tot_assets = first(tot_assets)
+), by = FDIC_certificate_id]
+
+print("Bank details:")
+print(bank_info)
+
+# Plot yearly ratings for specific banks
+ggplot(specific_banks, aes(x = year, y = yearly_rating, color = factor(FDIC_certificate_id))) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  labs(title = "Yearly App Ratings: Banks 628 and 3510",
+       x = "Year", y = "Yearly Rating", color = "FDIC Certificate ID") +
+  theme_minimal() +
+  ylim(1, 5)
+
+```
+

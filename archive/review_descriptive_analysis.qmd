@@ -1,0 +1,353 @@
+---
+title: "Bank App Reviews: Descriptive Analysis"
+author: "Generated Output"
+format:
+  html:
+    self-contained: true
+    code-overflow: scroll
+    toc: true
+execute:
+  warning: false
+  echo: true
+---
+
+Descriptive analysis of the relationship between bank size and mobile app ratings.
+
+# Setup
+
+
+```{r}
+#| warning: false
+#| messages: false
+
+rm(list=ls())
+library(data.table)
+library(ggplot2)
+options(device = "windows")  # Ensure plots show in popup windows
+
+
+apps <- fread("C:/OneDrive/data/data_bank_mobile_apps_2000_2021.csv")
+setDT(apps)
+setnames(apps, c("FDIC_certificate_id", "year"), c("CERT", "YEAR"))
+
+# Load raw reviews (review-level data)
+reviews_raw <- fread("C:/OneDrive/data/CH_app_reviews_data.csv")
+setDT(reviews_raw)
+
+# Load FDIC data for bank characteristics
+fdic_all <- readRDS("C:/OneDrive/data/fdic_sod_2000_2025_simple.rds")
+setDT(fdic_all)
+fdic_all <- fdic_all[, .(CERT, ASSET, YEAR)]
+fdic_all <- unique(fdic_all)
+
+# Merge reviews with FDIC to get bank sizes
+reviews_raw <- merge(reviews_raw, fdic_all, 
+                     by.x = c("FDIC_certificate_id", "review_year"), 
+                     by.y = c("CERT", "YEAR"), 
+                     all.x = TRUE)
+
+# Create size categories
+reviews_raw[, size_category := fifelse(ASSET >= 10000000, "Large (>$10B)",
+                                       fifelse(ASSET >= 1000000, "Medium ($1B-$10B)",
+                                              fifelse(ASSET > 0, "Small (<$1B)", NA_character_)))]
+
+# Aggregate to bank-year level with weighted average
+# rating is bucket (1-5), reviews_count is number of reviews in that bucket
+reviews_agg <- reviews_raw[reviews_available == 1, .(
+  mean_app_rating = sum(rating * reviews_count, na.rm = TRUE) / sum(reviews_count, na.rm = TRUE),
+  total_reviews = sum(reviews_count, na.rm = TRUE)
+), by = .(FDIC_certificate_id, review_year, ASSET, size_category)]
+
+setnames(reviews_agg, c("FDIC_certificate_id", "review_year"), c("CERT", "YEAR"))
+
+# Create comprehensive bank-year panel with app and review status
+# Start with FDIC (all banks), merge with apps and reviews
+
+# Which banks ever have reviews (across all years)?
+banks_with_reviews_ever <- unique(reviews_agg$CERT)
+
+# Merge apps with FDIC
+apps_fdic <- merge(fdic_all, apps[, .(CERT, YEAR, first_app_available)], 
+                   by = c("CERT", "YEAR"), all.x = TRUE)
+apps_fdic[is.na(first_app_available), first_app_available := 0]
+
+# For each bank, check if they ever have reviews
+apps_fdic[, has_review_ever := fifelse(CERT %in% banks_with_reviews_ever, 1L, 0L)]
+
+# Flag whether bank has reviews in THIS year
+reviews_banks_by_year <- unique(reviews_agg[, .(CERT, YEAR)])
+apps_fdic <- merge(apps_fdic, reviews_banks_by_year[, .(CERT, YEAR, has_review_this_year = 1L)], 
+                   by = c("CERT", "YEAR"), all.x = TRUE)
+apps_fdic[is.na(has_review_this_year), has_review_this_year := 0L]
+
+# Create "yes_reviews" flag: 1 if bank has app AND has reviews at least once in sample
+apps_fdic[, yes_reviews := fifelse(first_app_available == 1 & has_review_ever == 1, 1L, 0L)]
+
+# Add size categories to apps_fdic
+apps_fdic[, size_category := fifelse(ASSET >= 10000000, "Large (>$10B)",
+                                     fifelse(ASSET >= 1000000, "Medium ($1B-$10B)",
+                                            fifelse(ASSET > 0, "Small (<$1B)", NA_character_)))]
+
+# Keep old fdic_all structure for backward compatibility
+# fdic_all <- merge(fdic_all, reviews_banks_by_year[, .(CERT, YEAR, has_review = 1L)], 
+#                   by = c("CERT", "YEAR"), all.x = TRUE)
+# fdic_all[is.na(has_review), has_review := 0L]
+# 
+# # Also keep reviews_with_size for downstream analyses (using reviews_agg)
+# reviews_with_size <- reviews_agg
+
+```
+
+# Top 20 Banks by Assets Without Any Reviews
+
+```{r}
+#| warning: false
+#| messages: false
+
+# Get top 20 banks by 2022 assets that have never had a review
+top_20_no_reviews <- apps_fdic[YEAR == 2022 & has_review_ever == 0 & !is.na(ASSET), 
+                                .(CERT, ASSET)]
+top_20_no_reviews <- top_20_no_reviews[order(-ASSET)][1:20]
+
+print(top_20_no_reviews)
+```
+
+# Coverage: All Banks (Reviews vs No Reviews)
+
+```{r}
+#| warning: false
+#| messages: false
+
+# By year: count and asset share (among ALL banks)
+coverage_by_year <- apps_fdic[, .(
+  n_banks = uniqueN(CERT),
+  n_with_review = uniqueN(CERT[has_review_this_year == 1]),
+  total_assets = sum(ASSET, na.rm = TRUE),
+  assets_with_review = sum(ASSET[has_review_this_year == 1], na.rm = TRUE)
+), by = YEAR]
+
+coverage_by_year[, pct_banks_with_review := 100 * n_with_review / n_banks]
+coverage_by_year[, pct_assets_with_review := 100 * assets_with_review / total_assets]
+
+# Plot: Coverage over time
+ggplot(coverage_by_year[YEAR %in% 2012:2021], aes(x = YEAR)) +
+  geom_line(aes(y = pct_banks_with_review), color = "blue") +
+  geom_line(aes(y = pct_assets_with_review), color = "red", linetype = "dashed") +
+  labs(title = "App Review Coverage Among All Banks (Blue: % Banks, Red: % Assets)",
+       y = "Percent", x = "Year") +
+  theme_minimal()
+
+```
+
+
+
+```{r}
+#| warning: false
+#| messages: false
+
+# By year: count and asset share (among ALL banks)
+coverage_by_year <- apps_fdic[size_category=="Large (>$10B)", .(
+  n_banks = uniqueN(CERT),
+  n_with_review = uniqueN(CERT[has_review_ever == 1]),
+  total_assets = sum(ASSET, na.rm = TRUE),
+  assets_with_review = sum(ASSET[has_review_ever == 1], na.rm = TRUE)
+), by = YEAR]
+
+coverage_by_year[, pct_banks_with_review := 100 * n_with_review / n_banks]
+coverage_by_year[, pct_assets_with_review := 100 * assets_with_review / total_assets]
+
+# Plot: Coverage over time
+g <- ggplot(coverage_by_year[YEAR %in% 2012:2021], aes(x = YEAR)) +
+  geom_line(aes(y = pct_banks_with_review), color = "blue") +
+  geom_line(aes(y = pct_assets_with_review), color = "red", linetype = "dashed") +
+  labs(title = "App Review Coverage Among Large (>10b) Banks (Blue: % Banks, Red: % Assets)",
+       y = "Percent", x = "Year") +
+  theme_minimal()
+
+print(g)
+```
+# Coverage: Among Banks with Apps (Review Retrieval Success)
+
+```{r}
+
+# Coverage by size over time
+coverage_app_banks_size <- apps_fdic[first_app_available == 1 & !is.na(size_category), .(
+  n_banks_with_app = uniqueN(CERT),
+  n_with_review_ever = uniqueN(CERT[yes_reviews == 1])
+), by = .(YEAR, size_category)]
+coverage_app_banks_size[, pct_with_review := 100 * n_with_review_ever / n_banks_with_app]
+
+# Plot by size
+ggplot(coverage_app_banks_size[YEAR %in% 2012:2021], aes(x = YEAR, y = pct_with_review, color = size_category)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Coverage Among Banks with Apps",
+       y = "% with Reviews (Ever)", x = "Year", color = "Bank Size") +
+  theme_minimal()
+
+```
+
+# Review Penetration: What Share of Banks Have Reviews (Year-by-Year)?
+
+```{r}
+#| warning: false
+#| messages: false
+
+# For each size category, what fraction of banks have reviews in each year?
+# Need to merge all banks with review flags
+fdic_all[, size_category := fifelse(ASSET >= 10000000, "Large (>$10B)",
+                                    fifelse(ASSET >= 1000000, "Medium ($1B-$10B)",
+                                           fifelse(ASSET > 0, "Small (<$1B)", NA_character_)))]
+
+
+# Over time
+penetration_time <- apps_fdic[YEAR >= 2010 & !is.na(size_category), .(
+  pct_with_review = 100 * mean(has_review_this_year)
+), by = .(YEAR, size_category)]
+
+ggplot(penetration_time[YEAR  %in% 2012:2021], aes(x = YEAR, y = pct_with_review, color = size_category)) +
+  geom_line() +
+  labs(title = "% of Banks with App Reviews (By Year)",
+       x = "Year", y = "% of Banks with Reviews", color = "Bank Size") +
+  theme_minimal()
+
+```
+```{r}
+#| warning: false
+#| messages: false
+
+# For each size category, what fraction of banks have reviews in each year?
+# Need to merge all banks with review flags
+fdic_all[, size_category := fifelse(ASSET >= 10000000, "Large (>$10B)",
+                                    fifelse(ASSET >= 1000000, "Medium ($1B-$10B)",
+                                           fifelse(ASSET > 0, "Small (<$1B)", NA_character_)))]
+
+
+# Over time
+penetration_time <- apps_fdic[YEAR >= 2010 & !is.na(size_category), .(
+  pct_with_review = 100 * mean(has_review_ever)
+), by = .(YEAR, size_category)]
+
+ggplot(penetration_time[YEAR  %in% 2012:2021], aes(x = YEAR, y = pct_with_review, color = size_category)) +
+  geom_line() +
+  labs(title = "% of Banks with App Reviews (By Year)",
+       x = "Year", y = "% of Banks with Reviews", color = "Bank Size") +
+  theme_minimal()
+
+```
+# Review Coverage Ever: What Share of Banks Have Reviews At Least Once?
+
+```{r}
+#| warning: false
+#| messages: false
+
+# For each bank, determine if they ever have a review across all years
+# Use the largest asset value for each bank (to classify size)
+bank_level <- apps_fdic[YEAR>=2019, .(
+  max_asset = max(ASSET, na.rm = TRUE),
+  ever_has_review = max(has_review_ever, na.rm = TRUE)
+), by = CERT]
+
+bank_level[, size_category := fifelse(max_asset >= 10000000, "Large (>$10B)",
+                                      fifelse(max_asset >= 1000000, "Medium ($1B-$10B)",
+                                             fifelse(max_asset > 0, "Small (<$1B)", NA_character_)))]
+
+# Overall coverage
+cat("\n## Overall Review Coverage (Ever)\n\n")
+cat("Total banks:", uniqueN(bank_level$CERT), "\n")
+cat("Banks with at least one review:", sum(bank_level$ever_has_review), "\n")
+cat("% with at least one review:", round(100 * mean(bank_level$ever_has_review), 1), "%\n\n")
+
+# By size category
+cat("## Coverage by Bank Size (At Least One Review Throughout Sample)\n\n")
+coverage_by_size_ever <- bank_level[!is.na(size_category), .(
+  n_banks = .N,
+  n_with_review_ever = sum(ever_has_review),
+  pct_with_review_ever = 100 * mean(ever_has_review)
+), by = size_category]
+
+print(coverage_by_size_ever[order(-pct_with_review_ever)])
+
+# Bar plot
+ggplot(coverage_by_size_ever, aes(x = size_category, y = pct_with_review_ever, fill = size_category)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(pct_with_review_ever, 1), "%")), 
+            vjust = -0.5) +
+  labs(title = "% of Banks with At Least One Review (Post 2019)",
+       x = "Bank Size", y = "% with Reviews", fill = "Bank Size") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+```{r}
+#| warning: false
+#| messages: false
+
+# For each bank, determine if they ever have a review across all years
+# Use the largest asset value for each bank (to classify size)
+bank_level <- apps_fdic[YEAR>=2019 & first_app_available==1, .(
+  max_asset = max(ASSET, na.rm = TRUE),
+  ever_has_review = max(has_review_ever, na.rm = TRUE)
+), by = CERT]
+
+bank_level[, size_category := fifelse(max_asset >= 10000000, "Large (>$10B)",
+                                      fifelse(max_asset >= 1000000, "Medium ($1B-$10B)",
+                                             fifelse(max_asset > 0, "Small (<$1B)", NA_character_)))]
+
+# Overall coverage
+cat("\n## Overall Review Coverage (Ever)\n\n")
+cat("Total banks:", uniqueN(bank_level$CERT), "\n")
+cat("Banks with at least one review:", sum(bank_level$ever_has_review), "\n")
+cat("% with at least one review:", round(100 * mean(bank_level$ever_has_review), 1), "%\n\n")
+
+# By size category
+cat("## Coverage by Bank Size (At Least One Review Throughout Sample)\n\n")
+coverage_by_size_ever <- bank_level[!is.na(size_category), .(
+  n_banks = .N,
+  n_with_review_ever = sum(ever_has_review),
+  pct_with_review_ever = 100 * mean(ever_has_review)
+), by = size_category]
+
+print(coverage_by_size_ever[order(-pct_with_review_ever)])
+
+# Bar plot
+ggplot(coverage_by_size_ever, aes(x = size_category, y = pct_with_review_ever, fill = size_category)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(pct_with_review_ever, 1), "%")), 
+            vjust = -0.5) +
+  labs(title = "% of Banks with Apps with At Least One Review (Post 2019)",
+       x = "Bank Size", y = "% with Reviews", fill = "Bank Size") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+# Size and Rating Over Time
+
+```{r}
+#| warning: false
+#| messages: false
+
+# Mean rating by size category over time
+rating_by_size_year <- reviews_agg[!is.na(mean_app_rating) & !is.na(size_category), .(
+  mean_rating = mean(mean_app_rating, na.rm = TRUE),
+  n_banks = .N
+), by = .(YEAR, size_category)]
+
+# Plot: Mean rating by size over time
+ggplot(rating_by_size_year[YEAR %in% 2012:2021], aes(x = YEAR, y = mean_rating, color = size_category)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Mean App Rating by Bank Size Over Time",
+       x = "Year", y = "Mean App Rating", color = "Size Category") +
+  theme_minimal()
+
+```
+
+
+```{r}
+temp <- reviews_agg[CERT %in% c(628,3510) & YEAR>=2019]
+
+ggplot(temp,aes(x=YEAR, y=mean_app_rating,color=factor(CERT)))+geom_line()
+```
+
