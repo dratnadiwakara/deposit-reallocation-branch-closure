@@ -1,0 +1,475 @@
+---
+title: "Bank–County Panel: Deposit Retention Through Remaining Branches"
+author: "Generated Output"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-overflow: scroll
+    self-contained: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Overview
+
+This notebook builds a **bank–county–year** panel to study how deposits evolve at **remaining branches** following branch closures.
+
+### What we can (and cannot) measure
+- We can track deposits **only through observed branches**.  
+- If a bank closes all branches in a county and retains deposits digitally, those deposits may not appear in that county in branch-level data.  
+- Therefore, the analysis is best interpreted as **retention / reallocation through remaining local branches**.
+
+### Empirical object of interest
+We aggregate deposits for:
+- **Closed branches**: branches that close in year *t* but had deposits in *t-1*.
+- **Remaining branches**: branches that survive and exist in both *t-1* and *t+1* (so we can track outcomes consistently around the closure event).
+
+We then estimate how the deposits at remaining branches change with the intensity of deposits closed in the same bank–county–year, with flexible fixed effects and robustness checks.
+
+---
+
+## 0. Environment and configuration
+
+**Notes**
+- This chunk loads packages and defines analysis parameters.
+- We also define an `output_dir` and create it if needed.
+- You should edit file paths as necessary.
+
+```{r}
+rm(list = ls())
+
+library(data.table)
+library(stringr)
+library(fixest)
+library(ggplot2)
+
+# -------------------------
+# Inputs (edit paths)
+# -------------------------
+closure_path   <- "C:/OneDrive/data/closure_opening_data_simple.rds"
+app_panel_path <- "C:/OneDrive/data/CH_full_app_reviews_panel.csv"
+
+
+# -------------------------
+# Analysis parameters
+# -------------------------
+start_year <- 2001
+end_year   <- 2024
+
+tail_p <- 0.95                 # Extreme intensity cutoff (top 5%)
+min_deposits_threshold <- 1000 # Minimum deposits ($000s)
+min_remaining_branches <- 2    # Minimum remaining branches for within-bank variation
+
+# Utility: safe sum
+sum_na_safe <- function(x) if (all(is.na(x))) NA_real_ else as.numeric(sum(x, na.rm = TRUE))
+safe_max <- function(x) { x <- x[!is.na(x)]; if (length(x) == 0) NA_real_ else max(x) }
+
+# Make fixest output consistent
+setFixest_nthreads(0)  # use all available threads
+```
+
+
+```{r}
+cat("\n=== LOADING DATA ===\n")
+
+closure_raw <- readRDS(closure_path)
+setDT(closure_raw)
+closure_raw[, county := str_pad(STCNTYBR, 5, "left", "0")]
+closure_raw[, YEAR := as.integer(YEAR)]
+
+app_panel <- fread(app_panel_path)
+setDT(app_panel)
+
+app_panel <- app_panel[, .(
+  CERT = FDIC_certificate_id,
+  YEAR = as.integer(year),
+  first_app_available,
+  tot_assets,
+  reviews_available,
+  yearly_rating
+)]
+
+# IMPORTANT: confirm semantics of first_app_available in your source data.
+# If first_app_available==1 only in the first year, this is not a "has app" indicator.
+# If it's already "available by year", then this is correct.
+app_panel[, has_app := fifelse(first_app_available == 1, 1L, 0L)]
+
+closure_app <- merge(
+  closure_raw,
+  app_panel[, .(CERT, YEAR, has_app, tot_assets, reviews_available, yearly_rating)],
+  by = c("CERT", "YEAR"),
+  all.x = TRUE
+)
+closure_app[is.na(has_app), has_app := 0L]
+closure_app[is.na(reviews_available), reviews_available := 0L]
+
+# Bank identifier (use CERT unless you need RSSDID)
+closure_app[, bank_id := CERT]
+
+cat("Total branch-year observations:", nrow(closure_app), "\n")
+cat("Years covered:", min(closure_app$YEAR), "-", max(closure_app$YEAR), "\n")
+cat("Unique banks:", uniqueN(closure_app$bank_id), "\n")
+cat("Unique counties:", uniqueN(closure_app$county), "\n")
+
+```
+
+2. Create aligned deposits at t-1 and t+1 (branch level)
+
+Notes
+
+We compute lag/lead deposits by branch (UNINUMBR) and align them only when years are consecutive.
+
+We create flags for branch existence at t-1 and t+1.
+
+This is the backbone of defining “closed” and “remaining” branches in a way that supports clean timing.
+
+```{r}
+cat("\n=== CREATING TEMPORAL DEPOSIT VARIABLES ===\n")
+
+setorder(closure_app, UNINUMBR, YEAR)
+
+closure_app[, `:=`(
+  dep_lag1   = shift(DEPSUMBR, 1L, type = "lag"),
+  year_lag1  = shift(YEAR,     1L, type = "lag"),
+  dep_lead1  = shift(DEPSUMBR, 1L, type = "lead"),
+  year_lead1 = shift(YEAR,     1L, type = "lead"),
+  dep_lead3  = shift(DEPSUMBR, 3L, type = "lead"),
+  year_lead3 = shift(YEAR,     3L, type = "lead")
+), by = UNINUMBR]
+
+# Align only if consecutive years exist
+closure_app[, dep_lag1_aligned  := fifelse(year_lag1  == YEAR - 1L, dep_lag1,  NA_real_)]
+closure_app[, dep_lead1_aligned := fifelse(year_lead1 == YEAR + 1L, dep_lead1, NA_real_)]
+closure_app[, dep_lead3_aligned := fifelse(year_lead3 == YEAR + 3L, dep_lead3, NA_real_)]
+
+closure_app[, exists_t1  := !is.na(dep_lag1_aligned)  & dep_lag1_aligned  > 0]
+closure_app[, exists_tp1 := !is.na(dep_lead1_aligned) & dep_lead1_aligned > 0]
+closure_app[, exists_tp3 := !is.na(dep_lead3_aligned) & dep_lead3_aligned > 0]
+
+```
+
+
+```{r}
+cat("\n=== IDENTIFYING BRANCH STATUS ===\n")
+
+closure_app[, is_closed_t := (closed == 1L)]
+
+# Remaining branches: survive year t and exist at t-1 and t+1
+closure_app[, is_remaining_branch := (!is_closed_t) & exists_t1 & exists_tp1]
+# Remaining branches for t+3 outcome: exist at t-1 and t+3
+closure_app[, is_remaining_branch_t3 := (!is_closed_t) & exists_t1 & exists_tp3]
+
+# Closed branches: close in t but existed at t-1 (so we can measure the "closed deposits" base)
+closure_app[, is_closed_branch := is_closed_t & exists_t1]
+
+cat("Closed branches (with t-1 deposits):", sum(closure_app$is_closed_branch, na.rm = TRUE), "\n")
+cat("Remaining branches (with t-1 and t+1):", sum(closure_app$is_remaining_branch, na.rm = TRUE), "\n")
+
+```
+
+
+```{r}
+cat("\n=== AGGREGATING TO BANK-COUNTY-YEAR LEVEL ===\n")
+
+bank_cty_yr <- closure_app[, .(
+  deps_closed_t1 = sum_na_safe(fifelse(is_closed_branch, dep_lag1_aligned, NA_real_)),
+  deps_remain_t1 = sum_na_safe(fifelse(is_remaining_branch, dep_lag1_aligned, NA_real_)),
+  deps_remain_t  = sum_na_safe(fifelse(is_remaining_branch, DEPSUMBR,       NA_real_)),
+  deps_remain_tp1= sum_na_safe(fifelse(is_remaining_branch, dep_lead1_aligned, NA_real_)),
+  deps_remain_t1_t3 = sum_na_safe(fifelse(is_remaining_branch_t3, dep_lag1_aligned, NA_real_)),
+  deps_remain_tp3= sum_na_safe(fifelse(is_remaining_branch_t3, dep_lead3_aligned, NA_real_)),
+
+  n_closed_branches    = sum(is_closed_branch, na.rm = TRUE),
+  n_remaining_branches = sum(is_remaining_branch, na.rm = TRUE),
+
+  has_app = safe_max(has_app),
+  reviews_available = safe_max(reviews_available),
+  yearly_rating = safe_max(yearly_rating)
+), by = .(bank_id, county, YEAR)]
+
+# Replace NA sums with 0 where economically meaningful
+for (v in c("deps_closed_t1", "deps_remain_t1", "deps_remain_t", "deps_remain_tp1", "deps_remain_t1_t3", "deps_remain_tp3")) {
+  bank_cty_yr[is.na(get(v)), (v) := 0]
+}
+# max(..., na.rm=TRUE) returns -Inf when all NA; replace with sensible defaults
+bank_cty_yr[!is.finite(has_app), has_app := 0L]
+bank_cty_yr[!is.finite(reviews_available) | reviews_available < 0, reviews_available := 0L]
+bank_cty_yr[!is.finite(yearly_rating), yearly_rating := NA_real_]
+
+# Large bank: >$100B assets (tot_assets in thousands)
+bank_cty_yr[, large_bank := fifelse(bank_id %in% unique(app_panel[tot_assets>100000000]$CERT), 1L, 0L)]
+
+# Large good/bad app: median yearly_rating by year among large banks with reviews
+rating_med_by_year <- bank_cty_yr[large_bank == 1L & reviews_available == 1L & !is.na(yearly_rating),
+                                   .(med_rating = median(yearly_rating, na.rm = TRUE)), by = YEAR]
+bank_cty_yr <- merge(bank_cty_yr, rating_med_by_year, by = "YEAR", all.x = TRUE)
+bank_cty_yr[, large_good_app := fifelse(large_bank == 1L & reviews_available == 1L & !is.na(yearly_rating) & !is.na(med_rating) & yearly_rating > med_rating, 1L, 0L)]
+bank_cty_yr[, large_bad_app  := fifelse(large_bank == 1L & large_good_app == 0L, 1L, 0L)]  # large but not good_app
+bank_cty_yr[, med_rating := NULL]
+
+```
+
+
+
+```{r}
+cat("\n=== CREATING OUTCOME VARIABLES ===\n")
+
+# Level changes at remaining branches
+bank_cty_yr[, delta_deps_remaining := deps_remain_tp1 - deps_remain_t1]
+
+
+# Log difference (requires positive deposits at both ends)
+bank_cty_yr[, dlog_deps_remaining := fifelse(deps_remain_t1 > 0 & deps_remain_tp1 > 0,
+                                            log(deps_remain_tp1) - log(deps_remain_t1),
+                                            NA_real_)]
+# Log difference t-1 to t+3 (remaining branches defined as those existing at t-1 and t+3)
+bank_cty_yr[, dlog_deps_remaining_t3 := fifelse(deps_remain_t1_t3 > 0 & deps_remain_tp3 > 0,
+                                                log(deps_remain_tp3) - log(deps_remain_t1_t3),
+                                                NA_real_)]
+
+
+
+# Retention / migration proxies
+bank_cty_yr[, total_deps_bank_county_t1  := deps_closed_t1 + deps_remain_t1]
+
+
+```
+
+
+
+```{r}
+cat("\n=== CREATING CLOSURE AND NETWORK CHANGE FLAGS ===\n")
+
+bank_cty_yr[, any_closure_t := as.integer(deps_closed_t1 > 0)]
+
+setorder(bank_cty_yr, bank_id, county, YEAR)
+
+bank_cty_yr[, any_closure_tp1 := shift(any_closure_t, 1L, type = "lead"), by = .(bank_id, county)]
+bank_cty_yr[, any_closure_tm1 := shift(any_closure_t, 1L, type = "lag"),  by = .(bank_id, county)]
+bank_cty_yr[is.na(any_closure_tp1), any_closure_tp1 := 0L]
+bank_cty_yr[is.na(any_closure_tm1), any_closure_tm1 := 0L]
+
+bank_cty_yr[, closure_next_year := any_closure_tp1]
+bank_cty_yr[, closure_prev_year := any_closure_tm1]
+bank_cty_yr[, closure_t_and_next := as.integer(any_closure_t == 1L & closure_next_year == 1L)]
+bank_cty_yr[, closure_t_and_prev := as.integer(any_closure_t == 1L & closure_prev_year == 1L)]
+
+# Current-year branch counts (all branches, not just remaining)
+bank_cty_branches <- closure_app[, .(
+  n_branches_curr = uniqueN(UNINUMBR)
+), by = .(bank_id, county, YEAR)]
+
+bank_cty_closed_counts <- closure_app[closed == 1L, .(
+  n_closed_curr = uniqueN(UNINUMBR)
+), by = .(bank_id, county, YEAR)]
+
+bank_cty_yr <- merge(bank_cty_yr, bank_cty_branches, by = c("bank_id", "county", "YEAR"), all.x = TRUE)
+bank_cty_yr <- merge(bank_cty_yr, bank_cty_closed_counts, by = c("bank_id", "county", "YEAR"), all.x = TRUE)
+
+bank_cty_yr[is.na(n_branches_curr), n_branches_curr := 0L]
+bank_cty_yr[is.na(n_closed_curr),   n_closed_curr   := 0L]
+
+# Next-year branch count
+setorder(bank_cty_yr, bank_id, county, YEAR)
+bank_cty_yr[, n_branches_tp1 := shift(n_branches_curr, 1L, type = "lead"), by = .(bank_id, county)]
+bank_cty_yr[is.na(n_branches_tp1), n_branches_tp1 := n_branches_curr]
+
+bank_cty_yr[, delta_branches_t_to_tp1 := n_branches_tp1 - n_branches_curr]
+
+# Clean flags
+bank_cty_yr[, clean_no_change_if_no_closure :=
+              as.integer(any_closure_t == 0L & delta_branches_t_to_tp1 == 0L)]
+
+bank_cty_yr[, clean_only_current_closures :=
+              as.integer(any_closure_t == 1L &
+                         delta_branches_t_to_tp1 == -n_closed_curr &
+                         any_closure_tp1 == 0L)]
+
+bank_cty_yr[, clean_next_year_network :=
+              as.integer((any_closure_t == 0L & clean_no_change_if_no_closure == 1L) |
+                         (any_closure_t == 1L & clean_only_current_closures == 1L))]
+
+
+# View(bank_cty_yr[bank_id==9 & county=="23015"])
+
+```
+
+
+```{r}
+cat("\n=== IDENTIFYING EXTREME CLOSURE INTENSITY ===\n")
+
+bank_cty_yr[, closure_intensity :=
+              fifelse(deps_closed_t1 > 0 & deps_remain_t1 > 0,
+                      deps_closed_t1 / deps_remain_t1,
+                      NA_real_)]
+
+cut_intensity <- bank_cty_yr[
+  deps_closed_t1 > 0 & !is.na(closure_intensity),
+  quantile(closure_intensity, probs = tail_p, na.rm = TRUE)
+]
+
+bank_cty_yr[, extreme_intensity_pctl :=
+              as.integer(deps_closed_t1 > 0 &
+                         !is.na(closure_intensity) &
+                         (closure_intensity >= cut_intensity | closure_intensity < 0.01))]
+
+cat("Extreme intensity cutoff (", tail_p*100, "th percentile):", round(cut_intensity, 3), "\n")
+cat("Observations flagged as extreme:", sum(bank_cty_yr$extreme_intensity_pctl, na.rm = TRUE), "\n")
+
+```
+
+
+```{r}
+cat("\n=== DEFINING REGRESSION SAMPLES ===\n")
+
+top4_cert <- c(628L, 3510L, 3511L, 7213L)
+bank_cty_yr[, top4_bank := fifelse(bank_id %in% top4_cert, 1L, 0L)]
+
+
+reg_base <- bank_cty_yr[
+  YEAR >= start_year & YEAR <= end_year &
+    n_remaining_branches > 0 &
+    !is.na(dlog_deps_remaining)
+]
+
+cat("Base sample size:", nrow(reg_base), "\n")
+cat("  - With closures:", sum(reg_base$any_closure_t), "\n")
+cat("  - Without closures:", sum(reg_base$any_closure_t == 0), "\n")
+
+reg_base[, include_main := extreme_intensity_pctl == 0 ]
+
+reg_main <- reg_base[include_main == 1]
+
+cat("Main sample size:", nrow(reg_main), "\n")
+cat("  - With closures:", sum(reg_main$any_closure_t), "\n")
+cat("  - Without closures:", sum(reg_main$any_closure_t == 0), "\n")
+
+reg_no_sequential <- reg_main[closure_t_and_next == 0 & closure_t_and_prev == 0]
+cat("No sequential closures sample:", nrow(reg_no_sequential), "\n")
+
+exit_bc <- bank_cty_yr[
+  YEAR >= start_year & YEAR <= end_year &
+    deps_closed_t1 > 0 &
+    n_remaining_branches == 0
+]
+
+cat("\n=== EXIT DIAGNOSTICS ===\n")
+cat("Bank-county-years with closures & NO remaining branches:", nrow(exit_bc), "\n")
+cat("Exit share among closure observations:",
+    round(nrow(exit_bc) / max(1, nrow(bank_cty_yr[YEAR >= start_year & YEAR <= end_year & deps_closed_t1 > 0])), 4), "\n")
+
+```
+
+
+
+
+```{r}
+cat("\n=== RUNNING MAIN REGRESSIONS ===\n")
+
+setFixest_fml(
+  ..fixef  = ~ bank_id^YEAR + county^YEAR,
+  ..controls = ~ log1p(deps_remain_t1)
+)
+
+r_main <- list()
+r_main[[1]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) + ..controls | ..fixef,
+                     data = reg_base, vcov = ~ bank_id)
+r_main[[2]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) + ..controls | ..fixef,
+                     data = reg_main, vcov = ~ bank_id)
+r_main[[3]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) + ..controls | ..fixef,
+                     data = reg_main[YEAR < 2012], vcov = ~ bank_id)
+r_main[[4]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) + ..controls | ..fixef,
+                     data = reg_main[YEAR %in% 2012:2019], vcov = ~ bank_id)
+r_main[[5]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) + ..controls | ..fixef,
+                     data = reg_main[YEAR >= 2020], vcov = ~ bank_id)
+
+etable(r_main, headers = c("Base", "Main", "Pre 2012", "2012-2019", "2020-2024"))
+
+```
+### 12c. Main regressions with has_app interaction
+
+```{r}
+cat("\n=== MAIN REGRESSIONS: HAS_APP INTERACTION ===\n")
+
+r_app <- list()
+r_app[[1]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * has_app + ..controls | ..fixef,
+                    data = reg_base[YEAR >= 2010], vcov = ~ bank_id)
+r_app[[2]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * has_app + ..controls | ..fixef,
+                    data = reg_main[YEAR >= 2010], vcov = ~ bank_id)
+r_app[[3]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * has_app + ..controls | ..fixef,
+                    data = reg_main[YEAR >= 2010 & YEAR < 2012], vcov = ~ bank_id)
+r_app[[4]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * has_app + ..controls | ..fixef,
+                    data = reg_main[YEAR >= 2010 & YEAR %in% 2012:2019], vcov = ~ bank_id)
+r_app[[5]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * has_app + ..controls | ..fixef,
+                    data = reg_main[YEAR >= 2020], vcov = ~ bank_id)
+
+etable(r_app, headers = c("Base", "Main", "Pre 2012", "2012-2019", "2020-2024"))
+```
+
+### 12d. Main regressions with large_bank interaction (>$100B assets)
+
+```{r}
+cat("\n=== MAIN REGRESSIONS: LARGE_BANK INTERACTION (>$100B) ===\n")
+
+r_large <- list()
+r_large[[1]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_bank + ..controls | ..fixef,
+                      data = reg_base, vcov = ~ bank_id)
+r_large[[2]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_bank + ..controls | ..fixef,
+                      data = reg_main, vcov = ~ bank_id)
+r_large[[3]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_bank + ..controls | ..fixef,
+                      data = reg_main[YEAR < 2012], vcov = ~ bank_id)
+r_large[[4]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_bank + ..controls | ..fixef,
+                      data = reg_main[YEAR %in% 2012:2019], vcov = ~ bank_id)
+r_large[[5]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_bank + ..controls | ..fixef,
+                      data = reg_main[YEAR >= 2020], vcov = ~ bank_id)
+
+etable(r_large, headers = c("Base", "Main", "Pre 2012", "2012-2019", "2020-2024"))
+```
+### 12b. Main regressions with Top4 bank interaction
+
+```{r}
+cat("\n=== MAIN REGRESSIONS: TOP4 BANK INTERACTION ===\n")
+
+r_top4 <- list()
+r_top4[[1]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * top4_bank + ..controls | ..fixef,
+                     data = reg_base[large_bank==1], vcov = ~ bank_id)
+r_top4[[2]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * top4_bank + ..controls | ..fixef,
+                     data = reg_main[large_bank==1], vcov = ~ bank_id)
+r_top4[[3]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * top4_bank + ..controls | ..fixef,
+                     data = reg_main[YEAR < 2012 & (large_bank==1)], vcov = ~ bank_id)
+r_top4[[4]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * top4_bank + ..controls | ..fixef,
+                     data = reg_main[YEAR %in% 2012:2019 & (large_bank==1)], vcov = ~ bank_id)
+r_top4[[5]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * top4_bank + ..controls | ..fixef,
+                     data = reg_main[YEAR >= 2020 & (large_bank==1)], vcov = ~ bank_id)
+
+etable(r_top4, headers = c("Base", "Main", "Pre 2012", "2012-2019", "2020-2024"))
+```
+
+### 12e. Main regressions with large_good_app vs large_bad_app interaction (omitted: not large)
+
+```{r}
+cat("\n=== MAIN REGRESSIONS: LARGE_GOOD_APP vs LARGE_BAD_APP (omitted: not large) ===\n")
+
+r_appqual <- list()
+r_appqual[[1]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_good_app + log1p(deps_closed_t1) * large_bad_app + ..controls | ..fixef,
+                        data = reg_base[YEAR>=2010], vcov = ~ bank_id)
+r_appqual[[2]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_good_app + log1p(deps_closed_t1) * large_bad_app + ..controls | ..fixef,
+                        data = reg_main[YEAR>=2010], vcov = ~ bank_id)
+# r_appqual[[3]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_good_app + log1p(deps_closed_t1) * large_bad_app + ..controls | ..fixef,
+                        # data = reg_main[YEAR < 2012 & YEAR>=2010], vcov = ~ bank_id)
+r_appqual[[3]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_good_app + log1p(deps_closed_t1) * large_bad_app + ..controls | ..fixef,
+                        data = reg_main[YEAR %in% 2012:2019], vcov = ~ bank_id)
+r_appqual[[4]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_good_app + log1p(deps_closed_t1) * large_bad_app + ..controls | ..fixef,
+                        data = reg_main[YEAR >= 2020], vcov = ~ bank_id)
+
+etable(r_appqual, headers = c("Base", "Main", "2012-2019", "2020-2024"))
+```
+
+
+
+
+
+
