@@ -45,7 +45,8 @@ library(data.table)
 library(stringr)
 library(fixest)
 library(ggplot2)
-
+library(DescTools)
+library(lubridate)
 # -------------------------
 # Inputs (edit paths)
 # -------------------------
@@ -89,17 +90,16 @@ app_panel <- app_panel[, .(
   first_app_available,
   tot_assets,
   reviews_available,
-  yearly_rating
+  yearly_rating,
+  cumulative_rating
 )]
 
-# IMPORTANT: confirm semantics of first_app_available in your source data.
-# If first_app_available==1 only in the first year, this is not a "has app" indicator.
-# If it's already "available by year", then this is correct.
+
 app_panel[, has_app := fifelse(first_app_available == 1, 1L, 0L)]
 
 closure_app <- merge(
   closure_raw,
-  app_panel[, .(CERT, YEAR, has_app, tot_assets, reviews_available, yearly_rating)],
+  app_panel[, .(CERT, YEAR, has_app, tot_assets, reviews_available, yearly_rating, cumulative_rating)],
   by = c("CERT", "YEAR"),
   all.x = TRUE
 )
@@ -187,7 +187,8 @@ bank_cty_yr <- closure_app[, .(
 
   has_app = safe_max(has_app),
   reviews_available = safe_max(reviews_available),
-  yearly_rating = safe_max(yearly_rating)
+  yearly_rating = safe_max(yearly_rating),
+  cumulative_rating = safe_max(cumulative_rating)
 ), by = .(bank_id, county, YEAR)]
 
 # Replace NA sums with 0 where economically meaningful
@@ -198,9 +199,16 @@ for (v in c("deps_closed_t1", "deps_remain_t1", "deps_remain_t", "deps_remain_tp
 bank_cty_yr[!is.finite(has_app), has_app := 0L]
 bank_cty_yr[!is.finite(reviews_available) | reviews_available < 0, reviews_available := 0L]
 bank_cty_yr[!is.finite(yearly_rating), yearly_rating := NA_real_]
+bank_cty_yr[!is.finite(cumulative_rating), cumulative_rating := NA_real_]
 
-# Large bank: >$100B assets (tot_assets in thousands)
-bank_cty_yr[, large_bank := fifelse(bank_id %in% unique(app_panel[tot_assets>100000000]$CERT), 1L, 0L)]
+# Bank-level dummies (no time variation within bank): large_bank, then merge
+bank_level <- app_panel[, .(large_bank = as.integer(any(tot_assets > 100000000, na.rm = TRUE))), by = .(bank_id = CERT)]
+bank_cty_yr <- merge(bank_cty_yr, bank_level, by = "bank_id", all.x = TRUE)
+bank_cty_yr[is.na(large_bank), large_bank := 0L]
+
+# Large bank + app dummies (omitted category: small bank)
+bank_cty_yr[, large_bank_has_app := fifelse(large_bank == 1L & has_app == 1L, 1L, 0L)]
+bank_cty_yr[, large_bank_no_app  := fifelse(large_bank == 1L & has_app == 0L, 1L, 0L)]
 
 # Large good/bad app: median yearly_rating by year among large banks with reviews
 rating_med_by_year <- bank_cty_yr[large_bank == 1L & reviews_available == 1L & !is.na(yearly_rating),
@@ -210,6 +218,14 @@ bank_cty_yr[, large_good_app := fifelse(large_bank == 1L & reviews_available == 
 bank_cty_yr[, large_bad_app  := fifelse(large_bank == 1L & large_good_app == 0L, 1L, 0L)]  # large but not good_app
 bank_cty_yr[, med_rating := NULL]
 
+# Good/bad app by cumulative_rating: median cumulative_rating by year among large banks with reviews
+rating_cum_med_by_year <- bank_cty_yr[large_bank == 1L & reviews_available == 1L & !is.na(cumulative_rating),
+                                      .(med_rating_cum = median(cumulative_rating, na.rm = TRUE)), by = YEAR]
+bank_cty_yr <- merge(bank_cty_yr, rating_cum_med_by_year, by = "YEAR", all.x = TRUE)
+bank_cty_yr[, large_good_app_cumulative := fifelse(large_bank == 1L & reviews_available == 1L & !is.na(cumulative_rating) & !is.na(med_rating_cum) & cumulative_rating > med_rating_cum, 1L, 0L)]
+bank_cty_yr[, large_bad_app_cumulative  := fifelse(large_bank == 1L & large_good_app_cumulative == 0L, 1L, 0L)]  # large but not large_good_app_cumulative
+bank_cty_yr[, med_rating_cum := NULL]
+
 ```
 
 
@@ -217,24 +233,36 @@ bank_cty_yr[, med_rating := NULL]
 ```{r}
 cat("\n=== CREATING OUTCOME VARIABLES ===\n")
 
-# Level changes at remaining branches
-bank_cty_yr[, delta_deps_remaining := deps_remain_tp1 - deps_remain_t1]
-
-
-# Log difference (requires positive deposits at both ends)
-bank_cty_yr[, dlog_deps_remaining := fifelse(deps_remain_t1 > 0 & deps_remain_tp1 > 0,
-                                            log(deps_remain_tp1) - log(deps_remain_t1),
-                                            NA_real_)]
-# Log difference t-1 to t+3 (remaining branches defined as those existing at t-1 and t+3)
-bank_cty_yr[, dlog_deps_remaining_t3 := fifelse(deps_remain_t1_t3 > 0 & deps_remain_tp3 > 0,
-                                                log(deps_remain_tp3) - log(deps_remain_t1_t3),
-                                                NA_real_)]
+# # Level changes at remaining branches
+# bank_cty_yr[, delta_deps_remaining := deps_remain_tp1 - deps_remain_t1]
+# 
+# 
+# # Log difference (requires positive deposits at both ends)
+# bank_cty_yr[, dlog_deps_remaining := fifelse(deps_remain_t1 > 0 & deps_remain_tp1 > 0,
+#                                             log(deps_remain_tp1) - log(deps_remain_t1),
+#                                             NA_real_)]
+# # Log difference t-1 to t+3 (remaining branches defined as those existing at t-1 and t+3)
+# bank_cty_yr[, dlog_deps_remaining_t3 := fifelse(deps_remain_t1_t3 > 0 & deps_remain_tp3 > 0,
+#                                                 log(deps_remain_tp3) - log(deps_remain_t1_t3),
+#                                                 NA_real_)]
 
 
 
 # Retention / migration proxies
 bank_cty_yr[, total_deps_bank_county_t1  := deps_closed_t1 + deps_remain_t1]
 
+# Normalize by total initial deposits (common denominator for clean interpretation)
+bank_cty_yr[, closure_share := deps_closed_t1 / total_deps_bank_county_t1]
+bank_cty_yr[, growth_on_total_t3 := fifelse(
+  total_deps_bank_county_t1 > 0,
+  (deps_remain_tp3 - deps_remain_t1_t3) / total_deps_bank_county_t1,
+  NA_real_
+)]
+bank_cty_yr[, growth_on_total_t1 := fifelse(
+  total_deps_bank_county_t1 > 0,
+  (deps_remain_tp1 - deps_remain_t1) / total_deps_bank_county_t1,
+  NA_real_
+)]
 
 ```
 
@@ -321,19 +349,58 @@ cat("Observations flagged as extreme:", sum(bank_cty_yr$extreme_intensity_pctl, 
 
 ```
 
+```{r}
+cat("\n=== CHANGE_VISITS: BRANCH-LEVEL THEN BANK-LEVEL (weighted by 2019) ===\n")
+
+library(DescTools)
+library(lubridate)
+data_dir_visits <- "C:/OneDrive/data/nrs_branch_closure"
+branch_visits <- readRDS(file.path(data_dir_visits, "bank_branch_visits_count_2019_2022.rds"))
+setDT(branch_visits)
+branch_visits[, yr := year(DATE_RANGE_START)]
+branch_visits <- branch_visits[yr %in% c(2019, 2021)]
+# One bank_id per branch (most recent year in closure_app)
+branch_bank <- closure_app[order(UNINUMBR, -YEAR)][, .SD[1], by = UNINUMBR][, .(UNINUMBR, bank_id)]
+branch_visits <- merge(branch_visits, branch_bank, by = "UNINUMBR", all.x = TRUE)
+# Total visits per bank in each year, then drop_in_visits = (2019 - 2021) / 2019
+bank_change <- branch_visits[, .(total_visits = sum(RAW_VISITOR_COUNTS, na.rm = TRUE)), by = .(bank_id, yr)]
+bank_change <- dcast(bank_change, bank_id ~ yr, value.var = "total_visits")
+bank_change[, drop_in_visits := (`2019` - `2021`) / `2019`]
+bank_change[, drop_in_visits := Winsorize(drop_in_visits, quantile(drop_in_visits, probs = c(0.01, 0.99), na.rm = TRUE))]
+bank_change[, high_drop_visits := as.integer(drop_in_visits > median(drop_in_visits, na.rm = TRUE))]
+cat("Bank-level drop_in_visits (total visits 2019 vs 2021): ", nrow(bank_change), " banks.\n")
+```
 
 ```{r}
 cat("\n=== DEFINING REGRESSION SAMPLES ===\n")
 
+# Bank-level top4 (no time variation within bank)
 top4_cert <- c(628L, 3510L, 3511L, 7213L)
-bank_cty_yr[, top4_bank := fifelse(bank_id %in% top4_cert, 1L, 0L)]
+bank_top4 <- unique(bank_cty_yr[, .(bank_id)])
+bank_top4[, top4_bank := fifelse(bank_id %in% top4_cert, 1L, 0L)]
+bank_cty_yr[, top4_bank := NULL]
+bank_cty_yr <- merge(bank_cty_yr, bank_top4, by = "bank_id")
 
 
 reg_base <- bank_cty_yr[
   YEAR >= start_year & YEAR <= end_year &
     n_remaining_branches > 0 &
-    !is.na(dlog_deps_remaining)
+    total_deps_bank_county_t1 > 0 &
+    !(is.na(growth_on_total_t3) | is.na(growth_on_total_t1))
 ]
+reg_base <- merge(reg_base, bank_change, by = "bank_id", all.x = TRUE)
+
+p05_growth <- reg_base[, quantile(growth_on_total_t3, probs = 0.05, na.rm = TRUE)]
+reg_base[growth_on_total_t3 < p05_growth, growth_on_total_t3 := p05_growth]
+p95_growth <- reg_base[, quantile(growth_on_total_t3, probs = 0.95, na.rm = TRUE)]
+reg_base[growth_on_total_t3 > p95_growth, growth_on_total_t3 := p95_growth]
+
+
+p05_growth <- reg_base[, quantile(growth_on_total_t1, probs = 0.05, na.rm = TRUE)]
+reg_base[growth_on_total_t1 < p05_growth, growth_on_total_t1 := p05_growth]
+p95_growth <- reg_base[, quantile(growth_on_total_t1, probs = 0.95, na.rm = TRUE)]
+reg_base[growth_on_total_t1 > p95_growth, growth_on_total_t1 := p95_growth]
+
 
 cat("Base sample size:", nrow(reg_base), "\n")
 cat("  - With closures:", sum(reg_base$any_closure_t), "\n")
@@ -364,26 +431,44 @@ cat("Exit share among closure observations:",
 ```
 
 
+```{r}
+setFixest_fml(
+  ..fixef   = ~ bank_id^YEAR + county^YEAR,
+  ..controls = ~ log1p(total_deps_bank_county_t1),
+  ..depvar  = ~ growth_on_total_t1
+)
+
+
+setFixest_etable(
+  style.tex = style.tex(
+    "aer",
+    signif.code = c("***" = 0.01, "**" = 0.05, "*" = 0.1)
+  )
+)
+
+
+setFixest_etable(
+  signif.code = c("***" = 0.01, "**" = 0.05, "*" = 0.1),
+  se.below = T
+  )
+```
 
 
 ```{r}
 cat("\n=== RUNNING MAIN REGRESSIONS ===\n")
 
-setFixest_fml(
-  ..fixef  = ~ bank_id^YEAR + county^YEAR,
-  ..controls = ~ log1p(deps_remain_t1)
-)
+
 
 r_main <- list()
-r_main[[1]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) + ..controls | ..fixef,
+r_main[[1]] <- feols(..depvar ~ closure_share + ..controls | ..fixef,
                      data = reg_base, vcov = ~ bank_id)
-r_main[[2]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) + ..controls | ..fixef,
+r_main[[2]] <- feols(..depvar ~ closure_share + ..controls | ..fixef,
                      data = reg_main, vcov = ~ bank_id)
-r_main[[3]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) + ..controls | ..fixef,
+r_main[[3]] <- feols(..depvar ~ closure_share + ..controls | ..fixef,
                      data = reg_main[YEAR < 2012], vcov = ~ bank_id)
-r_main[[4]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) + ..controls | ..fixef,
+r_main[[4]] <- feols(..depvar ~ closure_share + ..controls | ..fixef,
                      data = reg_main[YEAR %in% 2012:2019], vcov = ~ bank_id)
-r_main[[5]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) + ..controls | ..fixef,
+r_main[[5]] <- feols(..depvar ~ closure_share + ..controls | ..fixef,
                      data = reg_main[YEAR >= 2020], vcov = ~ bank_id)
 
 etable(r_main, headers = c("Base", "Main", "Pre 2012", "2012-2019", "2020-2024"))
@@ -395,18 +480,29 @@ etable(r_main, headers = c("Base", "Main", "Pre 2012", "2012-2019", "2020-2024")
 cat("\n=== MAIN REGRESSIONS: HAS_APP INTERACTION ===\n")
 
 r_app <- list()
-r_app[[1]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * has_app + ..controls | ..fixef,
-                    data = reg_base[YEAR >= 2010], vcov = ~ bank_id)
-r_app[[2]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * has_app + ..controls | ..fixef,
-                    data = reg_main[YEAR >= 2010], vcov = ~ bank_id)
-r_app[[3]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * has_app + ..controls | ..fixef,
-                    data = reg_main[YEAR >= 2010 & YEAR < 2012], vcov = ~ bank_id)
-r_app[[4]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * has_app + ..controls | ..fixef,
-                    data = reg_main[YEAR >= 2010 & YEAR %in% 2012:2019], vcov = ~ bank_id)
-r_app[[5]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * has_app + ..controls | ..fixef,
+r_app[[1]] <- feols(..depvar ~ closure_share * has_app + ..controls | ..fixef,
+                    data = reg_main[YEAR %in% 2012:2019], vcov = ~ bank_id)
+r_app[[2]] <- feols(..depvar ~ closure_share * large_bank_has_app + closure_share * large_bank_no_app  + ..controls | ..fixef,
+                    data = reg_main[YEAR >= 2020], vcov = ~ bank_id)
+r_app[[3]] <- feols(..depvar ~ closure_share * large_good_app + closure_share * large_bad_app  + ..controls | ..fixef,
+                    data = reg_main[YEAR >= 2020], vcov = ~ bank_id)
+r_app[[4]] <- feols(..depvar ~ closure_share * large_good_app_cumulative + closure_share * large_bad_app_cumulative  + ..controls | ..fixef,
                     data = reg_main[YEAR >= 2020], vcov = ~ bank_id)
 
-etable(r_app, headers = c("Base", "Main", "Pre 2012", "2012-2019", "2020-2024"))
+
+etable(r_app, headers = c("2012-2019", "2012-2019", "2020-2024", "2020-2024"),order=c("closure_share"))
+```
+
+```{r}
+r_visits <- list()
+
+r_visits[[1]] <- feols(..depvar ~ closure_share * drop_in_visits   + ..controls | ..fixef,
+                    data = reg_main[YEAR >= 2020], vcov = ~ bank_id)
+r_visits[[2]] <- feols(..depvar ~ closure_share * high_drop_visits   + ..controls | ..fixef,
+                    data = reg_main[YEAR >= 2020], vcov = ~ bank_id)
+
+
+etable(r_visits, headers = c("2020-2024", "2020-2024"),order=c("closure_share"))
 ```
 
 ### 12d. Main regressions with large_bank interaction (>$100B assets)
@@ -415,61 +511,16 @@ etable(r_app, headers = c("Base", "Main", "Pre 2012", "2012-2019", "2020-2024"))
 cat("\n=== MAIN REGRESSIONS: LARGE_BANK INTERACTION (>$100B) ===\n")
 
 r_large <- list()
-r_large[[1]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_bank + ..controls | ..fixef,
+r_large[[1]] <- feols(..depvar ~ closure_share * large_bank + ..controls | ..fixef,
                       data = reg_base, vcov = ~ bank_id)
-r_large[[2]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_bank + ..controls | ..fixef,
+r_large[[2]] <- feols(..depvar ~ closure_share * large_bank + ..controls | ..fixef,
                       data = reg_main, vcov = ~ bank_id)
-r_large[[3]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_bank + ..controls | ..fixef,
+r_large[[3]] <- feols(..depvar ~ closure_share * large_bank + ..controls | ..fixef,
                       data = reg_main[YEAR < 2012], vcov = ~ bank_id)
-r_large[[4]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_bank + ..controls | ..fixef,
+r_large[[4]] <- feols(..depvar ~ closure_share * large_bank + ..controls | ..fixef,
                       data = reg_main[YEAR %in% 2012:2019], vcov = ~ bank_id)
-r_large[[5]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_bank + ..controls | ..fixef,
+r_large[[5]] <- feols(..depvar ~ closure_share * large_bank + ..controls | ..fixef,
                       data = reg_main[YEAR >= 2020], vcov = ~ bank_id)
 
-etable(r_large, headers = c("Base", "Main", "Pre 2012", "2012-2019", "2020-2024"))
+etable(r_large, headers = c("Base", "Main", "Pre 2012", "2012-2019", "2020-2024"),order=c("closure_share"))
 ```
-### 12b. Main regressions with Top4 bank interaction
-
-```{r}
-cat("\n=== MAIN REGRESSIONS: TOP4 BANK INTERACTION ===\n")
-
-r_top4 <- list()
-r_top4[[1]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * top4_bank + ..controls | ..fixef,
-                     data = reg_base[large_bank==1], vcov = ~ bank_id)
-r_top4[[2]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * top4_bank + ..controls | ..fixef,
-                     data = reg_main[large_bank==1], vcov = ~ bank_id)
-r_top4[[3]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * top4_bank + ..controls | ..fixef,
-                     data = reg_main[YEAR < 2012 & (large_bank==1)], vcov = ~ bank_id)
-r_top4[[4]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * top4_bank + ..controls | ..fixef,
-                     data = reg_main[YEAR %in% 2012:2019 & (large_bank==1)], vcov = ~ bank_id)
-r_top4[[5]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * top4_bank + ..controls | ..fixef,
-                     data = reg_main[YEAR >= 2020 & (large_bank==1)], vcov = ~ bank_id)
-
-etable(r_top4, headers = c("Base", "Main", "Pre 2012", "2012-2019", "2020-2024"))
-```
-
-### 12e. Main regressions with large_good_app vs large_bad_app interaction (omitted: not large)
-
-```{r}
-cat("\n=== MAIN REGRESSIONS: LARGE_GOOD_APP vs LARGE_BAD_APP (omitted: not large) ===\n")
-
-r_appqual <- list()
-r_appqual[[1]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_good_app + log1p(deps_closed_t1) * large_bad_app + ..controls | ..fixef,
-                        data = reg_base[YEAR>=2010], vcov = ~ bank_id)
-r_appqual[[2]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_good_app + log1p(deps_closed_t1) * large_bad_app + ..controls | ..fixef,
-                        data = reg_main[YEAR>=2010], vcov = ~ bank_id)
-# r_appqual[[3]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_good_app + log1p(deps_closed_t1) * large_bad_app + ..controls | ..fixef,
-                        # data = reg_main[YEAR < 2012 & YEAR>=2010], vcov = ~ bank_id)
-r_appqual[[3]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_good_app + log1p(deps_closed_t1) * large_bad_app + ..controls | ..fixef,
-                        data = reg_main[YEAR %in% 2012:2019], vcov = ~ bank_id)
-r_appqual[[4]] <- feols(dlog_deps_remaining_t3 ~ log1p(deps_closed_t1) * large_good_app + log1p(deps_closed_t1) * large_bad_app + ..controls | ..fixef,
-                        data = reg_main[YEAR >= 2020], vcov = ~ bank_id)
-
-etable(r_appqual, headers = c("Base", "Main", "2012-2019", "2020-2024"))
-```
-
-
-
-
-
-
