@@ -317,9 +317,53 @@ branch_panel[, delta_mkt_share_win := Winsorize(delta_mkt_share,
 
 ```{r}
 #-----------------------------
+# 7b) Drop in visits (2019 vs 2021) – bank-level aggregate, then merge by CERT
+#-----------------------------
+library(lubridate)
+data_dir_visits <- "C:/OneDrive/data/nrs_branch_closure"
+branch_visits <- readRDS(file.path(data_dir_visits, "bank_branch_visits_count_2019_2022.rds"))
+setDT(branch_visits)
+branch_visits[, yr := year(DATE_RANGE_START)]
+branch_visits <- branch_visits[yr %in% c(2019, 2021)]
+branch_bank <- closure_app[order(UNINUMBR, -YEAR)][, .SD[1], by = UNINUMBR][, .(UNINUMBR, CERT)]
+branch_visits <- merge(branch_visits, branch_bank, by = "UNINUMBR", all.x = TRUE)
+bank_change <- branch_visits[, .(total_visits = sum(RAW_VISIT_COUNTS, na.rm = TRUE)), by = .(CERT, yr)]
+bank_change <- dcast(bank_change, CERT ~ yr, value.var = "total_visits")
+bank_change[, drop_in_visits := (`2019` - `2021`) / `2019`]
+bank_change[, drop_in_visits := Winsorize(drop_in_visits, quantile(drop_in_visits, probs = c(0.01, 0.99), na.rm = TRUE))]
+bank_change[, high_drop_visits := as.integer(drop_in_visits > median(drop_in_visits, na.rm = TRUE))]
+branch_panel <- merge(branch_panel, bank_change[, .(CERT, drop_in_visits, high_drop_visits)], by = "CERT", all.x = TRUE)
+cat("Bank-level drop_in_visits / high_drop_visits merged into branch_panel by CERT.\n")
+```
+
+```{r}
+#-----------------------------
+# 7c) App quality vs other banks in county: best in county, above median in county
+#-----------------------------
+bank_cy_rating <- unique(closure_app[, .(CERT, county, YEAR, rating = own_bank_app_rating)])
+cy_stats <- bank_cy_rating[, .(max_rating = max(rating, na.rm = TRUE), med_rating = median(rating, na.rm = TRUE)), by = .(county, YEAR)]
+bank_cy_rating <- merge(bank_cy_rating, cy_stats, by = c("county", "YEAR"))
+bank_cy_rating[, best_app_in_county := as.integer(rating >= max_rating)]
+bank_cy_rating[, above_median_app_in_county := as.integer(rating > med_rating)]
+app_quality_cy <- bank_cy_rating[, .(CERT, county, YEAR, best_app_in_county, above_median_app_in_county)]
+branch_panel <- merge(branch_panel, app_quality_cy, by = c("CERT", "county", "YEAR"), all.x = TRUE)
+cat("best_app_in_county and above_median_app_in_county merged into branch_panel.\n")
+```
+
+
+```{r}
+#-----------------------------
 # 8) Final regression sample
 #-----------------------------
 branch_panel[, closer_remaining_branch := 1L - incumbent_bank]
+
+# Merge county-year controls panel (from create_county_controls_panel.R; county_code = county, year = YEAR)
+data_dir_nrs <- "C:/OneDrive/data/nrs_branch_closure"
+
+county_controls_panel <- readRDS(file.path(data_dir_nrs, "county_controls_panel.rds"))
+setDT(county_controls_panel)
+branch_panel <- merge(branch_panel, county_controls_panel,
+                      by.x = c("county", "YEAR"), by.y = c("county_code", "year"), all.x = TRUE)
 
 reg_dt <- branch_panel[
   YEAR >= start_year & YEAR <= end_year &
@@ -334,70 +378,7 @@ reg_dt[, bank_type_fct := factor(
   levels = c("other", "top4", "large_but_not_top4")
 )]
 
-#-----------------------------
-# 9) Summary Statistics
-#-----------------------------
-
-cat("\n=== SUMMARY STATISTICS ===\n\n")
-
-# Histogram of market share change
-g1 <- (ggplot(reg_dt, aes(x = gr_branch)) + 
-        geom_histogram(bins = 50) +
-        labs(title = "Distribution of Deposit Growth",
-             x = "Deposit Growth",
-             y = "Count") +
-        geom_vline(xintercept = 0, color = "red", linetype = "dashed") +
-        theme_minimal())
-
-g2 <- (ggplot(reg_dt, aes(x = delta_mkt_share_win)) + 
-        geom_histogram(bins = 50) +
-        labs(title = "Distribution of Market Share Change",
-             x = "Change in Market Share",
-             y = "Count") +
-        geom_vline(xintercept = 0, color = "red", linetype = "dashed") +
-        theme_minimal())
-
-# Summary stats
-vars_mktshare <- c(
-  "gr_branch",
-  "delta_mkt_share",
-  "delta_mkt_share_bps",
-  "mkt_share_t1",
-  "mkt_share_lead1",
-  "share_deps_closed_top4",
-  "share_deps_closed_large_but_not_top4",
-  "share_deps_closed_small",
-  "share_deps_closed_app",
-  "share_deps_closed_noapp",
-  "share_deps_closed",
-  "own_bank_has_app",
-  "top4_bank",
-  "banks_county_lag1",
-  "county_dep_growth_t4_t1",
-  "dep_lag1_aligned"
-)
-
-vars_mktshare <- intersect(vars_mktshare, names(reg_dt))
-
-cat("\n--- Summary Stats: All Years ---\n")
-temp <- summary_stats_function(reg_dt, vars_mktshare)
-md_table(temp)
-
-cat("\n--- Summary Stats: Counties with Closures Only ---\n")
-temp <- summary_stats_function(reg_dt[share_deps_closed > 0], vars_mktshare)
-md_table(temp)
-
-cat("\n--- Summary Stats: 2019 Only ---\n")
-temp <- summary_stats_function(reg_dt[YEAR == 2019], vars_mktshare)
-md_table(temp)
-
-# Check: average market share change by closure exposure
-cat("\n--- Average Market Share Change by Closure Quartiles ---\n")
-reg_dt[share_deps_closed > 0, closure_quartile := cut(share_deps_closed, 
-                                                      breaks = quantile(share_deps_closed, 
-                                                                        probs = c(0, 0.25, 0.5, 0.75, 1)),
-                                                      labels = c("Q1", "Q2", "Q3", "Q4"),
-                                                      include.lowest = TRUE)]
+reg_dt[,county_yr:=paste0(county,YEAR)]
 
 
 ```
@@ -439,12 +420,17 @@ ggplot(share_means_long, aes(x = YEAR, y = mean_share, color = variable)) +
 #-----------------------------
 
 setFixest_fml(
-  ..fixef_branch = ~ UNINUMBR + state_yr + bank_yr,
-  ..controls = ~ log1p(banks_county_lag1) +
-    county_dep_growth_t4_t1 +
-    log1p(dep_lag1_aligned)
+  ..fixef_branch = ~ UNINUMBR+ state_yr + bank_yr ,
+  ..fixef_sy_by = ~ state_yr + bank_yr ,
+  ..controls = ~ log1p(banks_county_lag1) + county_dep_growth_t4_t1 + log1p(dep_lag1_aligned) +
+    log_population_density + lag_county_deposit_hhi + lag_establishment_gr + lag_payroll_gr +
+    lag_hmda_mtg_amt_gr + lag_cra_loan_amount_amt_lt_1m_gr +  lmi
 )
 
+setFixest_etable(
+  signif.code = c("***" = 0.01, "**" = 0.05, "*" = 0.1),
+  se.below = T
+)
 
 ```
 
@@ -452,69 +438,144 @@ setFixest_fml(
 ```{r}
 r_original <- list()
 r_original[[1]] <- feols(gr_branch ~ share_deps_closed + ..controls | ..fixef_branch,
-                         data = reg_dt[incumbent_bank==1 & YEAR<=2019])
-r_original[[2]] <- feols(gr_branch ~ share_deps_closed + ..controls | ..fixef_branch,
-                         data = reg_dt[incumbent_bank==1 & YEAR>=2020])
+                         data = reg_dt[incumbent_bank==1 & YEAR<=2019], vcov = ~UNINUMBR)
+r_original[[2]] <- feols(gr_branch ~ share_deps_closed + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 & YEAR<=2019], vcov = ~UNINUMBR)
+r_original[[3]] <- feols(gr_branch ~ share_deps_closed + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020], vcov = ~UNINUMBR)
+r_original[[4]] <- feols(gr_branch ~ share_deps_closed + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020], vcov = ~UNINUMBR)
 
-etable(r_original, headers = c("2012-2019","2020-2025"))
+etable(r_original, headers = list("2012-2019" = 2, "2020-2024" = 2))
 ```
 
-```{r}
-r_original <- list()
-r_original[[1]] <- feols(gr_branch ~ share_deps_closed*bank_type_fct + ..controls | ..fixef_branch,
-                         data = reg_dt[incumbent_bank==1 & YEAR<=2019])
-r_original[[2]] <- feols(gr_branch ~ share_deps_closed*bank_type_fct + ..controls | ..fixef_branch,
-                         data = reg_dt[incumbent_bank==1 & YEAR>=2020])
-
-etable(r_original, headers = c("2012-2019","2020-2025"))
-```
 
 
 ```{r}
 r_byapp <- list()
 r_byapp[[1]] <- feols(gr_branch ~ share_deps_closed_app + share_deps_closed_noapp + share_deps_closed_top4 + ..controls | ..fixef_branch,
-                         data = reg_dt[incumbent_bank==1 & YEAR<=2019])
-r_byapp[[2]] <- feols(gr_branch ~ share_deps_closed_small + share_deps_closed_large_but_not_top4 + share_deps_closed_top4 + ..controls | ..fixef_branch,
-                         data = reg_dt[incumbent_bank==1 & YEAR>=2020])
-r_byapp[[3]] <- feols(gr_branch ~ share_deps_closed_small*own_bank_app_rating + share_deps_closed_large_but_not_top4*own_bank_app_rating + share_deps_closed_top4*own_bank_app_rating + ..controls | ..fixef_branch,
-                         data = reg_dt[incumbent_bank==1 & YEAR>=2020 & own_bank_app_rating>1])
+                         data = reg_dt[incumbent_bank==1 & YEAR<=2019], vcov = ~UNINUMBR)
+r_byapp[[2]] <- feols(gr_branch ~ share_deps_closed_app + share_deps_closed_noapp + share_deps_closed_top4 + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 & YEAR<=2019], vcov = ~UNINUMBR)
+r_byapp[[3]] <- feols(gr_branch ~ share_deps_closed_small + share_deps_closed_large_but_not_top4 + share_deps_closed_top4 + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020], vcov = ~UNINUMBR)
+r_byapp[[4]] <- feols(gr_branch ~ share_deps_closed_small + share_deps_closed_large_but_not_top4 + share_deps_closed_top4 + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020], vcov = ~UNINUMBR)
 
-etable(r_byapp, headers = c("2012-2019","2020-2025","2020-2025"),order = c("share_deps_closed_app","share_deps_closed_noapp","share_deps_closed_top4",
+etable(r_byapp, headers = list("2020-2024 (best app)" = 2, "2020-2024 (above med)" = 2), order = c("share_deps_closed_app","share_deps_closed_noapp","share_deps_closed_top4",
+                                                                           "share_deps_closed_large_but_not_top4","share_deps_closed_small","best_app_in_county"))
+```
+```{r}
+r_byapp <- list()
+r_byapp[[1]] <- feols(gr_branch ~ share_deps_closed_small*best_app_in_county + share_deps_closed_large_but_not_top4*best_app_in_county + share_deps_closed_top4*best_app_in_county + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020 ], vcov = ~UNINUMBR)
+r_byapp[[2]] <- feols(gr_branch ~ share_deps_closed_small*best_app_in_county + share_deps_closed_large_but_not_top4*best_app_in_county + share_deps_closed_top4*best_app_in_county + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020 ], vcov = ~UNINUMBR)
+r_byapp[[3]] <- feols(gr_branch ~ share_deps_closed_small*above_median_app_in_county + share_deps_closed_large_but_not_top4*above_median_app_in_county + share_deps_closed_top4*above_median_app_in_county + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020 ], vcov = ~UNINUMBR)
+r_byapp[[4]] <- feols(gr_branch ~ share_deps_closed_small*above_median_app_in_county + share_deps_closed_large_but_not_top4*above_median_app_in_county + share_deps_closed_top4*above_median_app_in_county + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020 ], vcov = ~UNINUMBR)
+
+
+etable(r_byapp, headers = list("2020-2024 (best app)" = 2, "2020-2024 (above med)" = 2), order = c("share_deps_closed_app","share_deps_closed_noapp","share_deps_closed_top4",
+                                                                           "share_deps_closed_large_but_not_top4","share_deps_closed_small","best_app_in_county"))
+
+```
+
+```{r}
+r_byapp <- list()
+r_byapp[[1]] <- feols(gr_branch ~ share_deps_closed*drop_in_visits + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020 ], vcov = ~UNINUMBR)
+r_byapp[[2]] <- feols(gr_branch ~ share_deps_closed*drop_in_visits + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020 ], vcov = ~UNINUMBR)
+r_byapp[[3]] <- feols(gr_branch ~ share_deps_closed*high_drop_visits + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020 ], vcov = ~UNINUMBR)
+r_byapp[[4]] <- feols(gr_branch ~ share_deps_closed*high_drop_visits + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020 ], vcov = ~UNINUMBR)
+
+etable(r_byapp, headers = list("2020-2024 (drop)" = 2, "2020-2024 (high drop)" = 2), order = c("share_deps_closed_app","share_deps_closed_noapp","share_deps_closed_top4",
+                                                                           "share_deps_closed_large_but_not_top4","share_deps_closed_small","best_app_in_county"))
+```
+
+
+```{r}
+r_original <- list()
+r_original[[1]] <- feols(gr_branch ~ share_deps_closed*top4_bank + share_deps_closed*large_but_not_top4_bank + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1 & YEAR<=2019], vcov = ~UNINUMBR)
+r_original[[2]] <- feols(gr_branch ~ share_deps_closed*top4_bank + share_deps_closed*large_but_not_top4_bank + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 & YEAR<=2019], vcov = ~UNINUMBR)
+r_original[[3]] <- feols(gr_branch ~ share_deps_closed*top4_bank + share_deps_closed*large_but_not_top4_bank + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020], vcov = ~UNINUMBR)
+r_original[[4]] <- feols(gr_branch ~ share_deps_closed*top4_bank + share_deps_closed*large_but_not_top4_bank + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020], vcov = ~UNINUMBR)
+
+etable(r_original, headers = list("2012-2019" = 2, "2020-2024" = 2), order=c("share_deps_closed"))
+```
+
+
+
+
+```{r}
+r_byapp <- list()
+r_byapp[[1]] <- feols(gr_branch ~ share_deps_closed_app + share_deps_closed_noapp + share_deps_closed_top4 + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1 & YEAR<=2019], vcov = ~UNINUMBR)
+r_byapp[[2]] <- feols(gr_branch ~ share_deps_closed_app + share_deps_closed_noapp + share_deps_closed_top4 + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 & YEAR<=2019], vcov = ~UNINUMBR)
+r_byapp[[3]] <- feols(gr_branch ~ share_deps_closed_small + share_deps_closed_large_but_not_top4 + share_deps_closed_top4 + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020], vcov = ~UNINUMBR)
+r_byapp[[4]] <- feols(gr_branch ~ share_deps_closed_small + share_deps_closed_large_but_not_top4 + share_deps_closed_top4 + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020], vcov = ~UNINUMBR)
+r_byapp[[5]] <- feols(gr_branch ~ share_deps_closed_small*own_bank_app_rating + share_deps_closed_large_but_not_top4*own_bank_app_rating + share_deps_closed_top4*own_bank_app_rating + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020 & own_bank_app_rating>1], vcov = ~UNINUMBR)
+r_byapp[[6]] <- feols(gr_branch ~ share_deps_closed_small*own_bank_app_rating + share_deps_closed_large_but_not_top4*own_bank_app_rating + share_deps_closed_top4*own_bank_app_rating + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020 & own_bank_app_rating>1], vcov = ~UNINUMBR)
+
+etable(r_byapp, headers = list("2012-2019" = 2, "2020-2025" = 2, "2020-2025 (rating)" = 2), order = c("share_deps_closed_app","share_deps_closed_noapp","share_deps_closed_top4",
                                                                            "share_deps_closed_large_but_not_top4","share_deps_closed_small"))
 ```
 
 ```{r}
 r_original <- list()
 r_original[[1]] <- feols(gr_branch ~ share_deps_closed*closer_remaining_branch + ..controls | ..fixef_branch,
-                         data = reg_dt[YEAR<=2019])
-r_original[[2]] <- feols(gr_branch ~ share_deps_closed*closer_remaining_branch + ..controls | ..fixef_branch,
-                         data = reg_dt[YEAR>=2020])
+                         data = reg_dt[YEAR<=2019], vcov = ~UNINUMBR)
+r_original[[2]] <- feols(gr_branch ~ share_deps_closed*closer_remaining_branch + ..controls | ..fixef_sy_by,
+                         data = reg_dt[YEAR<=2019], vcov = ~UNINUMBR)
+r_original[[3]] <- feols(gr_branch ~ share_deps_closed*closer_remaining_branch + ..controls | ..fixef_branch,
+                         data = reg_dt[YEAR>=2020], vcov = ~UNINUMBR)
+r_original[[4]] <- feols(gr_branch ~ share_deps_closed*closer_remaining_branch + ..controls | ..fixef_sy_by,
+                         data = reg_dt[YEAR>=2020], vcov = ~UNINUMBR)
 
-etable(r_original, headers = c("2012-2019","2020-2025"))
+etable(r_original, headers = list("2012-2019" = 2, "2020-2025" = 2))
 ```
 
 
 ```{r}
 r_byapp <- list()
 r_byapp[[1]] <- feols(gr_branch ~ share_deps_closed_app*bank_type_fct + share_deps_closed_noapp*bank_type_fct + share_deps_closed_top4*bank_type_fct + ..controls | ..fixef_branch,
-                         data = reg_dt[incumbent_bank==1 & YEAR<=2019])
-r_byapp[[2]] <- feols(gr_branch ~ share_deps_closed_small*bank_type_fct + share_deps_closed_large_but_not_top4*bank_type_fct + share_deps_closed_top4*bank_type_fct + ..controls | ..fixef_branch,
-                         data = reg_dt[incumbent_bank==1 & YEAR>=2020])
+                         data = reg_dt[incumbent_bank==1 & YEAR<=2019], vcov = ~UNINUMBR)
+r_byapp[[2]] <- feols(gr_branch ~ share_deps_closed_app*bank_type_fct + share_deps_closed_noapp*bank_type_fct + share_deps_closed_top4*bank_type_fct + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 & YEAR<=2019], vcov = ~UNINUMBR)
+r_byapp[[3]] <- feols(gr_branch ~ share_deps_closed_small*bank_type_fct + share_deps_closed_large_but_not_top4*bank_type_fct + share_deps_closed_top4*bank_type_fct + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020], vcov = ~UNINUMBR)
+r_byapp[[4]] <- feols(gr_branch ~ share_deps_closed_small*bank_type_fct + share_deps_closed_large_but_not_top4*bank_type_fct + share_deps_closed_top4*bank_type_fct + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 & YEAR>=2020], vcov = ~UNINUMBR)
 
-
-etable(r_byapp, headers = c("2012-2019","2020-2025"),order = c("share_deps_closed_app","share_deps_closed_noapp","share_deps_closed_top4",
+etable(r_byapp, headers = list("2012-2019" = 2, "2020-2025" = 2), order = c("share_deps_closed_app","share_deps_closed_noapp","share_deps_closed_top4",
                                                                            "share_deps_closed_large_but_not_top4","share_deps_closed_small"))
 ```
 
 ```{r}
 r_byapp <- list()
 r_byapp[[1]] <- feols(gr_branch ~ share_deps_closed_app*closer_remaining_branch + share_deps_closed_noapp*closer_remaining_branch + share_deps_closed_top4*closer_remaining_branch + ..controls | ..fixef_branch,
-                         data = reg_dt[YEAR<=2019])
-r_byapp[[2]] <- feols(gr_branch ~ share_deps_closed_small*closer_remaining_branch + share_deps_closed_large_but_not_top4*closer_remaining_branch + share_deps_closed_top4*closer_remaining_branch + ..controls | ..fixef_branch,
-                         data = reg_dt[YEAR>=2020])
+                         data = reg_dt[YEAR<=2019], vcov = ~UNINUMBR)
+r_byapp[[2]] <- feols(gr_branch ~ share_deps_closed_app*closer_remaining_branch + share_deps_closed_noapp*closer_remaining_branch + share_deps_closed_top4*closer_remaining_branch + ..controls | ..fixef_sy_by,
+                         data = reg_dt[YEAR<=2019], vcov = ~UNINUMBR)
+r_byapp[[3]] <- feols(gr_branch ~ share_deps_closed_small*closer_remaining_branch + share_deps_closed_large_but_not_top4*closer_remaining_branch + share_deps_closed_top4*closer_remaining_branch + ..controls | ..fixef_branch,
+                         data = reg_dt[YEAR>=2020], vcov = ~UNINUMBR)
+r_byapp[[4]] <- feols(gr_branch ~ share_deps_closed_small*closer_remaining_branch + share_deps_closed_large_but_not_top4*closer_remaining_branch + share_deps_closed_top4*closer_remaining_branch + ..controls | ..fixef_sy_by,
+                         data = reg_dt[YEAR>=2020], vcov = ~UNINUMBR)
 
-
-etable(r_byapp, headers = c("2012-2019","2020-2025"),order = c("share_deps_closed_app","share_deps_closed_noapp","share_deps_closed_top4",
+etable(r_byapp, headers = list("2012-2019" = 2, "2020-2025" = 2), order = c("share_deps_closed_app","share_deps_closed_noapp","share_deps_closed_top4",
                                                                            "share_deps_closed_large_but_not_top4","share_deps_closed_small"))
 ```
 
@@ -525,32 +586,56 @@ cat("\n\n=== ORIGINAL REGRESSIONS (Growth Rate) ===\n\n")
 
 r_original <- list()
 r_original[[1]] <- feols(gr_branch ~ share_deps_closed + ..controls | ..fixef_branch,
-                         data = reg_dt[incumbent_bank==1])
+                         data = reg_dt[incumbent_bank==1], vcov = ~UNINUMBR)
+r_original[[2]] <- feols(gr_branch ~ share_deps_closed + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1], vcov = ~UNINUMBR)
 
-r_original[[2]] <- feols(gr_branch ~ share_deps_closed * own_bank_has_app + ..controls | ..fixef_branch,
-                         data = reg_dt[incumbent_bank==1])
+r_original[[3]] <- feols(gr_branch ~ share_deps_closed * own_bank_has_app + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1], vcov = ~UNINUMBR)
+r_original[[4]] <- feols(gr_branch ~ share_deps_closed * own_bank_has_app + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1], vcov = ~UNINUMBR)
 
-r_original[[3]] <- feols(gr_branch ~ share_deps_closed_app + share_deps_closed_noapp + share_deps_closed_top4 + ..controls | ..fixef_branch,
-                         data = reg_dt[incumbent_bank==1])
+r_original[[5]] <- feols(gr_branch ~ share_deps_closed_app + share_deps_closed_noapp + share_deps_closed_top4 + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1], vcov = ~UNINUMBR)
+r_original[[6]] <- feols(gr_branch ~ share_deps_closed_app + share_deps_closed_noapp + share_deps_closed_top4 + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1], vcov = ~UNINUMBR)
 
-r_original[[4]] <- feols(gr_branch ~ share_deps_closed_app * own_bank_has_app +
+r_original[[7]] <- feols(gr_branch ~ share_deps_closed_app * own_bank_has_app +
                            share_deps_closed_noapp * own_bank_has_app + 
                            share_deps_closed_top4 * own_bank_has_app + ..controls |
                            ..fixef_branch,
-                         data = reg_dt[incumbent_bank==1])
+                         data = reg_dt[incumbent_bank==1], vcov = ~UNINUMBR)
+r_original[[8]] <- feols(gr_branch ~ share_deps_closed_app * own_bank_has_app +
+                           share_deps_closed_noapp * own_bank_has_app + 
+                           share_deps_closed_top4 * own_bank_has_app + ..controls |
+                           ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1], vcov = ~UNINUMBR)
 
-r_original[[5]] <- feols(gr_branch ~ share_deps_closed_app + share_deps_closed_noapp + share_deps_closed_top4 + ..controls | ..fixef_branch,
-                         data = reg_dt[incumbent_bank==1 & YEAR < 2016])
+r_original[[9]] <- feols(gr_branch ~ share_deps_closed_app + share_deps_closed_noapp + share_deps_closed_top4 + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1 & YEAR < 2016], vcov = ~UNINUMBR)
+r_original[[10]] <- feols(gr_branch ~ share_deps_closed_app + share_deps_closed_noapp + share_deps_closed_top4 + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 & YEAR < 2016], vcov = ~UNINUMBR)
 
-r_original[[6]] <- feols(gr_branch ~ share_deps_closed_app + share_deps_closed_noapp + share_deps_closed_top4 + ..controls | ..fixef_branch,
-                         data = reg_dt[incumbent_bank==1 &  YEAR >= 2016])
+r_original[[11]] <- feols(gr_branch ~ share_deps_closed_app + share_deps_closed_noapp + share_deps_closed_top4 + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1 &  YEAR >= 2016], vcov = ~UNINUMBR)
+r_original[[12]] <- feols(gr_branch ~ share_deps_closed_app + share_deps_closed_noapp + share_deps_closed_top4 + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1 &  YEAR >= 2016], vcov = ~UNINUMBR)
+
+r_original[[13]] <- feols(gr_branch ~ share_deps_closed * best_app_in_county + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1], vcov = ~UNINUMBR)
+r_original[[14]] <- feols(gr_branch ~ share_deps_closed * best_app_in_county + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1], vcov = ~UNINUMBR)
+r_original[[15]] <- feols(gr_branch ~ share_deps_closed * above_median_app_in_county + ..controls | ..fixef_branch,
+                         data = reg_dt[incumbent_bank==1], vcov = ~UNINUMBR)
+r_original[[16]] <- feols(gr_branch ~ share_deps_closed * above_median_app_in_county + ..controls | ..fixef_sy_by,
+                         data = reg_dt[incumbent_bank==1], vcov = ~UNINUMBR)
 
 # r_original[[5]] <- feols(gr_branch ~ share_deps_closed_app * top4_bank +
 #                            share_deps_closed_noapp * top4_bank + ..controls |
 #                            ..fixef_branch,
-#                          data = reg_dt)
+#                          data = reg_dt, vcov = ~UNINUMBR)
 
-etable(r_original, headers = c("Total", "+ Own App", "CB App/NoApp", "+ Own App","< 2016",">=2016"))
+etable(r_original, headers = list("Total" = 2, "+ Own App" = 2, "CB App/NoApp" = 2, "+ Own App" = 2, "< 2016" = 2, ">=2016" = 2, "Best in county" = 2, "Above med in county" = 2))
 
 ```
 
@@ -558,47 +643,24 @@ etable(r_original, headers = c("Total", "+ Own App", "CB App/NoApp", "+ Own App"
 ```{r}
 r_original2 <- list()
 r_original2[[1]] <- feols(gr_branch ~ share_deps_closed*closer_remaining_branch + ..controls | ..fixef_branch,
-                         data = reg_dt)
+                         data = reg_dt, vcov = ~UNINUMBR)
+r_original2[[2]] <- feols(gr_branch ~ share_deps_closed*closer_remaining_branch + ..controls | ..fixef_sy_by,
+                         data = reg_dt, vcov = ~UNINUMBR)
 
-r_original2[[2]] <- feols(gr_branch ~ share_deps_closed_app*closer_remaining_branch + share_deps_closed_noapp*closer_remaining_branch + share_deps_closed_top4*closer_remaining_branch+ ..controls | ..fixef_branch,
-                         data = reg_dt)
-
-
+r_original2[[3]] <- feols(gr_branch ~ share_deps_closed_app*closer_remaining_branch + share_deps_closed_noapp*closer_remaining_branch + share_deps_closed_top4*closer_remaining_branch+ ..controls | ..fixef_branch,
+                         data = reg_dt, vcov = ~UNINUMBR)
+r_original2[[4]] <- feols(gr_branch ~ share_deps_closed_app*closer_remaining_branch + share_deps_closed_noapp*closer_remaining_branch + share_deps_closed_top4*closer_remaining_branch+ ..controls | ..fixef_sy_by,
+                         data = reg_dt, vcov = ~UNINUMBR)
 
 # r_original[[5]] <- feols(gr_branch ~ share_deps_closed_app * top4_bank +
 #                            share_deps_closed_noapp * top4_bank + ..controls |
 #                            ..fixef_branch,
-#                          data = reg_dt)
+#                          data = reg_dt, vcov = ~UNINUMBR)
 
-etable(r_original2, headers = c("Total",  "CB App/NoApp"))
+etable(r_original2, headers = list("Total" = 2, "CB App/NoApp" = 2))
 ```
 
 
-```{r}
-cat("\n\n=== NEW REGRESSIONS (Market Share Change in Percentage Points) ===\n\n")
-
-r_mktshare <- list()
-r_mktshare[[1]] <- feols(delta_mkt_share_win ~ share_deps_closed + ..controls | ..fixef_branch,
-                         data = reg_dt)
-
-r_mktshare[[2]] <- feols(delta_mkt_share_win ~ share_deps_closed * own_bank_has_app + ..controls | ..fixef_branch,
-                         data = reg_dt)
-
-r_mktshare[[3]] <- feols(delta_mkt_share_win ~ share_deps_closed_app + share_deps_closed_noapp + ..controls | ..fixef_branch,
-                         data = reg_dt)
-
-r_mktshare[[4]] <- feols(delta_mkt_share_win ~ share_deps_closed_app * own_bank_has_app +
-                           share_deps_closed_noapp * own_bank_has_app + ..controls |
-                           ..fixef_branch,
-                         data = reg_dt)
-# 
-# r_mktshare[[5]] <- feols(delta_mkt_share_win ~ share_deps_closed_app * top4_bank +
-#                            share_deps_closed_noapp * top4_bank + ..controls |
-#                            ..fixef_branch,
-#                          data = reg_dt)
-
-etable(r_mktshare, headers = c("Total", "+ Own App", "CB App/NoApp", "+ Own App"))
-```
 
 
 
