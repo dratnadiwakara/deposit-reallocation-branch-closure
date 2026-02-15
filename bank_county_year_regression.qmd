@@ -581,3 +581,253 @@ ggplot(reg_main, aes(x = growth_on_total_t1, fill = factor(any_closure_t))) +
   theme_minimal()
 ```
 
+
+
+```{r}
+cat("\n=== SUN & ABRAHAM: TOTAL DEPOSITS (ALL BRANCHES) ===\n")
+
+# Step 0: Create total deposits variable at bank-county-year level
+bank_cty_yr_total <- closure_app[, .(
+  total_deps_all_branches = sum(DEPSUMBR, na.rm = TRUE),
+  n_branches_all = .N
+), by = .(bank_id, county, YEAR)]
+
+# Step 1: Identify first closure year for treated bank-counties
+first_closure <- bank_cty_yr[
+  any_closure_t == 1,
+  .(cohort = min(YEAR)),
+  by = .(bank_id, county)
+]
+
+# Step 2: Start with total deposits data and add cohort
+reg_sunab <- merge(
+  bank_cty_yr_total,
+  first_closure,
+  by = c("bank_id", "county"),
+  all.x = TRUE
+)
+
+# Step 3: Sample never-treated bank-counties (20% sample to save memory)
+set.seed(123)
+never_treated_bc <- unique(reg_sunab[is.na(cohort), .(bank_id, county)])
+sampled_never_treated <- never_treated_bc[sample(.N, max(1, .N * 0.5))]
+
+# Step 4: Filter dataset
+reg_sunab <- reg_sunab[
+  # Treated in ±3 window
+  (!is.na(cohort) & YEAR >= cohort - 3 & YEAR <= cohort + 3) |
+  # OR sampled never-treated (all years)
+  (is.na(cohort) & paste(bank_id, county) %in% paste(sampled_never_treated$bank_id, sampled_never_treated$county))
+]
+
+# Step 5: Set cohort = 10000 for never-treated
+reg_sunab[is.na(cohort), cohort := 10000]
+
+# Step 6: Create unit ID
+reg_sunab[, unit_id := .GRP, by = .(bank_id, county)]
+
+# Step 7: Run sunab with total deposits
+sunab_model <- feols(
+  log1p(total_deps_all_branches) ~ sunab(cohort, YEAR, ref.p = -1) | 
+    unit_id + YEAR,
+  data = reg_sunab,
+  vcov = ~ bank_id
+)
+
+# Step 8: Plot
+ggiplot(sunab_model, 
+      main = "Sun & Abraham: Total Deposits (All Branches)",
+      xlab = "Years Relative to First Closure",
+      ylab = "Log Deposits (All Branches)")
+
+# Step 9: Summary
+etable(sunab_model)
+
+```
+```{r}
+cat("\n=== SUN & ABRAHAM: BY TIME PERIOD ===\n")
+
+# Step 0: Create total deposits variable at bank-county-year level
+bank_cty_yr_total <- closure_app[, .(
+  total_deps_all_branches = sum(DEPSUMBR, na.rm = TRUE),
+  n_branches_all = .N
+), by = .(bank_id, county, YEAR)]
+
+# Step 1: Identify first closure year for treated bank-counties
+first_closure <- bank_cty_yr[
+  any_closure_t == 1,
+  .(cohort = min(YEAR)),
+  by = .(bank_id, county)
+]
+
+# Step 2: Start with total deposits data and add cohort
+reg_sunab <- merge(
+  bank_cty_yr_total,
+  first_closure,
+  by = c("bank_id", "county"),
+  all.x = TRUE
+)
+
+# Step 3: Sample never-treated bank-counties (50% sample)
+set.seed(123)
+never_treated_bc <- unique(reg_sunab[is.na(cohort), .(bank_id, county)])
+sampled_never_treated <- never_treated_bc[sample(.N, max(1, .N * 0.5))]
+
+# Step 4: Filter dataset
+reg_sunab <- reg_sunab[
+  (!is.na(cohort) & YEAR >= cohort - 3 & YEAR <= cohort + 3) |
+  (is.na(cohort) & paste(bank_id, county) %in% paste(sampled_never_treated$bank_id, sampled_never_treated$county))
+]
+
+# Step 5: Set cohort = 10000 for never-treated
+reg_sunab[is.na(cohort), cohort := 10000]
+
+# Step 6: Create unit ID
+reg_sunab[, unit_id := .GRP, by = .(bank_id, county)]
+
+# Step 7: Run sunab for each period
+sunab_pre2012 <- feols(
+  log1p(total_deps_all_branches) ~ sunab(cohort, YEAR, ref.p = -1) | 
+    unit_id + YEAR,
+  data = reg_sunab[YEAR < 2012],
+  vcov = ~ bank_id
+)
+
+sunab_2012_2019 <- feols(
+  log1p(total_deps_all_branches) ~ sunab(cohort, YEAR, ref.p = -1) | 
+    unit_id + YEAR,
+  data = reg_sunab[YEAR >= 2012 & YEAR <= 2019],
+  vcov = ~ bank_id
+)
+
+sunab_2020_2024 <- feols(
+  log1p(total_deps_all_branches) ~ sunab(cohort, YEAR, ref.p = -1) | 
+    unit_id + YEAR,
+  data = reg_sunab[YEAR >= 2020],
+  vcov = ~ bank_id
+)
+
+etable(sunab_pre2012,sunab_2012_2019,sunab_2020_2024)
+
+```
+
+```{r}
+cat("\n=== SUN & ABRAHAM: DOSE-RESPONSE WITH CLOSURE_SHARE ===\n")
+
+# Step 0: Create total deposits variable at bank-county-year level
+bank_cty_yr_total <- closure_app[, .(
+  total_deps_all_branches = sum(DEPSUMBR, na.rm = TRUE),
+  n_branches_all = .N
+), by = .(bank_id, county, YEAR)]
+
+# Merge with your existing bank_cty_yr to get closure_share
+bank_cty_yr_total <- merge(
+  bank_cty_yr_total,
+  bank_cty_yr[, .(bank_id, county, YEAR, closure_share, deps_closed_t1, total_deps_bank_county_t1)],
+  by = c("bank_id", "county", "YEAR"),
+  all.x = TRUE
+)
+
+# Fill NAs
+bank_cty_yr_total[is.na(closure_share), closure_share := 0]
+
+# Step 1: Identify first closure year for treated bank-counties
+first_closure <- bank_cty_yr[
+  any_closure_t == 1,
+  .(cohort = min(YEAR)),
+  by = .(bank_id, county)
+]
+
+# Step 2: Add cohort
+reg_sunab <- merge(
+  bank_cty_yr_total,
+  first_closure,
+  by = c("bank_id", "county"),
+  all.x = TRUE
+)
+
+# Step 3: Sample never-treated bank-counties
+set.seed(123)
+never_treated_bc <- unique(reg_sunab[is.na(cohort), .(bank_id, county)])
+sampled_never_treated <- never_treated_bc[sample(.N, max(1, .N * 0.2))]
+
+# Step 4: Filter dataset
+reg_sunab <- reg_sunab[
+  (!is.na(cohort) & YEAR >= cohort - 3 & YEAR <= cohort + 3) |
+  (is.na(cohort) & paste(bank_id, county) %in% paste(sampled_never_treated$bank_id, sampled_never_treated$county))
+]
+
+# Step 5: Set cohort = 10000 for never-treated
+reg_sunab[is.na(cohort), cohort := 10000]
+
+# Step 6: Create unit ID
+reg_sunab[, unit_id := .GRP, by = .(bank_id, county)]
+
+# Step 7: INTERACTION MODEL - sunab interacted with closure_share
+sunab_dose <- feols(
+  log1p(total_deps_all_branches) ~ sunab(cohort, YEAR, ref.p = -1, closure_share) | 
+    unit_id + YEAR,
+  data = reg_sunab,
+  vcov = ~ bank_id
+)
+
+# Step 8: Plot
+ggiplot(sunab_dose, 
+      main = "Sun & Abraham: Dose-Response (Closure Share)",
+      xlab = "Years Relative to First Closure",
+      ylab = "Effect per Unit of Closure Share")
+
+etable(sunab_dose)
+```
+
+
+```{r}
+cat("\n=== SUN & ABRAHAM: MEMORY-EFFICIENT VERSION (FIXED) ===\n")
+
+# Step 1: Identify first closure year for treated bank-counties
+first_closure <- bank_cty_yr[
+  any_closure_t == 1,
+  .(cohort = min(YEAR)),
+  by = .(bank_id, county)
+]
+
+# Step 2: Add cohort to reg_base
+reg_base[, cohort := NULL]  # Remove if exists
+reg_base <- merge(
+  reg_base,
+  first_closure,
+  by = c("bank_id", "county"),
+  all.x = TRUE
+)
+
+# Step 3: Sample never-treated bank-counties
+set.seed(123)
+never_treated_bc <- unique(reg_base[is.na(cohort), .(bank_id, county)])
+sampled_never_treated <- never_treated_bc[sample(.N, max(1, .N * 0.25))]
+
+# Step 4: Filter dataset
+reg_sunab <- reg_base[
+  # Treated in ±3 window
+  (!is.na(cohort) & YEAR >= cohort - 3 & YEAR <= cohort + 3) |
+  # OR sampled never-treated (all years)
+  (is.na(cohort) & paste(bank_id, county) %in% paste(sampled_never_treated$bank_id, sampled_never_treated$county))
+]
+
+reg_sunab[, unit_id := .GRP, by = .(bank_id, county)]
+
+# Step 5: Set cohort = 10000 for never-treated
+reg_sunab[is.na(cohort), cohort := 10000]
+
+# Step 6: Run sunab
+sunab_model <- feols(
+  log1p(deps_remain_t) ~ sunab(cohort, YEAR, ref.p = -1) | 
+    bank_id^county + YEAR,
+  data = reg_sunab,
+  vcov = ~ bank_id
+)
+
+# Step 7: Plot
+ggiplot(sunab_model, 
+      main = "Sun & Abraham: With Sampled Never-Treated Controls")
+```
+
