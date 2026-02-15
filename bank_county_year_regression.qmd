@@ -264,6 +264,11 @@ bank_cty_yr[, growth_on_total_t1 := fifelse(
   NA_real_
 )]
 
+# Bank's market share in county-year (share of county deposits at t-1)
+county_deps_t1 <- bank_cty_yr[, .(total_county_deps_t1 = sum(total_deps_bank_county_t1, na.rm = TRUE)), by = .(county, YEAR)]
+bank_cty_yr <- merge(bank_cty_yr, county_deps_t1, by = c("county", "YEAR"), all.x = TRUE)
+bank_cty_yr[, mkt_share_county_t1 := fifelse(total_county_deps_t1 > 0, total_deps_bank_county_t1 / total_county_deps_t1, NA_real_)]
+
 ```
 
 
@@ -388,17 +393,19 @@ reg_base <- bank_cty_yr[
     total_deps_bank_county_t1 > 0 &
     !(is.na(growth_on_total_t3) | is.na(growth_on_total_t1))
 ]
+
+reg_base[,state:=substr(county,1,2)]
 reg_base <- merge(reg_base, bank_change, by = "bank_id", all.x = TRUE)
 
-p05_growth <- reg_base[, quantile(growth_on_total_t3, probs = 0.05, na.rm = TRUE)]
+p05_growth <- reg_base[, quantile(growth_on_total_t3, probs = 0.025, na.rm = TRUE)]
 reg_base[growth_on_total_t3 < p05_growth, growth_on_total_t3 := p05_growth]
-p95_growth <- reg_base[, quantile(growth_on_total_t3, probs = 0.95, na.rm = TRUE)]
+p95_growth <- reg_base[, quantile(growth_on_total_t3, probs = 0.975, na.rm = TRUE)]
 reg_base[growth_on_total_t3 > p95_growth, growth_on_total_t3 := p95_growth]
 
 
-p05_growth <- reg_base[, quantile(growth_on_total_t1, probs = 0.05, na.rm = TRUE)]
+p05_growth <- reg_base[, quantile(growth_on_total_t1, probs = 0.025, na.rm = TRUE)]
 reg_base[growth_on_total_t1 < p05_growth, growth_on_total_t1 := p05_growth]
-p95_growth <- reg_base[, quantile(growth_on_total_t1, probs = 0.95, na.rm = TRUE)]
+p95_growth <- reg_base[, quantile(growth_on_total_t1, probs = 0.975, na.rm = TRUE)]
 reg_base[growth_on_total_t1 > p95_growth, growth_on_total_t1 := p95_growth]
 
 
@@ -409,6 +416,7 @@ cat("  - Without closures:", sum(reg_base$any_closure_t == 0), "\n")
 reg_base[, include_main := extreme_intensity_pctl == 0 ]
 
 reg_main <- reg_base[include_main == 1]
+reg_main <- reg_main[any_closure_t == 1 | (any_closure_t == 0L & clean_no_change_if_no_closure == 1L)]
 
 cat("Main sample size:", nrow(reg_main), "\n")
 cat("  - With closures:", sum(reg_main$any_closure_t), "\n")
@@ -434,7 +442,7 @@ cat("Exit share among closure observations:",
 ```{r}
 setFixest_fml(
   ..fixef   = ~ bank_id^YEAR + county^YEAR,
-  ..controls = ~ log1p(total_deps_bank_county_t1),
+  ..controls = ~ log1p(total_deps_bank_county_t1) + log1p(n_remaining_branches) + mkt_share_county_t1,
   ..depvar  = ~ growth_on_total_t1
 )
 
@@ -466,6 +474,36 @@ r_main[[4]] <- feols(..depvar ~ closure_share + ..controls | ..fixef,
 etable(r_main, headers = c("All", "Pre 2012", "2012-2019", "2020-2024"))
 
 ```
+
+### 12b. closure_share coefficient by 4-year period (2001–2024)
+
+```{r}
+# Run main regression separately for each year, extract closure_share coefficient
+# Non-overlapping 4-year windows ending in 2024: 2001-2004, 2005-2008, ..., 2021-2024
+years <- seq(2001, 2021, by = 3)  # each window is (y, y+1, y+2, y+3)
+coef_by_year <- data.frame(year = numeric(), coef = numeric(), se = numeric(), n = integer())
+
+for (y in years) {
+  dt <- reg_main[YEAR %in% c(y, y + 1, y + 2)]
+  if (nrow(dt) < 400) next  # skip periods with too few observations
+  fit <- try(feols(..depvar ~ closure_share + ..controls | ..fixef,
+                   data = dt, vcov = ~ bank_id), silent = TRUE)
+  if (inherits(fit, "try-error")) next
+  c <- coef(fit)["closure_share"]
+  s <- sqrt(vcov(fit)["closure_share", "closure_share"])
+  coef_by_year <- rbind(coef_by_year, data.frame(year = y + 1, coef = c, se = s, n = nobs(fit)))
+}
+
+ggplot(coef_by_year, aes(x = year, y = coef)) +
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = coef - 1.96 * se, ymax = coef + 1.96 * se), width = 0.2, linewidth = 0.3) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  labs(x = "Year (midpoint of 3-year window)", y = "closure_share coefficient",
+       title = "closure_share coefficient by 4-year period (main regression)") +
+  theme_minimal()
+```
+
 ### 12c. Main regressions with has_app interaction
 
 ```{r}
@@ -525,18 +563,14 @@ etable(r_large, headers = c("Base", "Main", "Pre 2012", "2012-2019", "2020-2024"
 reg_main[, period := fifelse(YEAR %in% 2012:2019, "2012-2019", fifelse(YEAR >= 2020, "2020-2024", NA_character_))]
 desc_stats <- reg_main[!is.na(period), .(
   N = .N,
-  depvar_mean = round(mean(growth_on_total_t1, na.rm = TRUE), 4),
-  depvar_sd   = round(sd(growth_on_total_t1, na.rm = TRUE), 4),
-  depvar_min  = round(min(growth_on_total_t1, na.rm = TRUE), 4),
-  depvar_max  = round(max(growth_on_total_t1, na.rm = TRUE), 4),
-  closure_share_mean = round(mean(closure_share, na.rm = TRUE), 4),
-  closure_share_sd   = round(sd(closure_share, na.rm = TRUE), 4),
-  closure_share_min  = round(min(closure_share, na.rm = TRUE), 4),
-  closure_share_max  = round(max(closure_share, na.rm = TRUE), 4)
+  depvar_mean = round(mean(growth_on_total_t1, na.rm = TRUE), 3),
+  depvar_sd   = round(sd(growth_on_total_t1, na.rm = TRUE), 3),
+  closure_share_mean = round(mean(closure_share, na.rm = TRUE), 3),
+  closure_share_sd   = round(sd(closure_share, na.rm = TRUE), 3)
 ), keyby = .(period, any_closure_t)]
 setnames(desc_stats, "any_closure_t", "any_closure")
 cat("\n=== Descriptive stats: depvar (growth_on_total_t1) and closure_share by period and any_closure ===\n\n")
-print(desc_stats)
+md_table(desc_stats)
 reg_main[, period := NULL]
 ```
 
