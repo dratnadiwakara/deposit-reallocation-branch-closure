@@ -465,6 +465,22 @@ r_byapp[[4]] <- feols(gr_branch ~ share_deps_closed_small + share_deps_closed_la
 etable(r_byapp, headers = list("2020-2024 (best app)" = 2, "2020-2024 (above med)" = 2), order = c("share_deps_closed_app","share_deps_closed_noapp","share_deps_closed_top4",
                                                                            "share_deps_closed_large_but_not_top4","share_deps_closed_small","best_app_in_county"))
 ```
+
+
+```{r}
+# Create constraint matrix: [1, -1, 0, ...] to test β_app - β_noapp = 0
+library(car)  # for linearHypothesis
+
+linearHypothesis(r_byapp[[1]], 
+                 "share_deps_closed_app = share_deps_closed_noapp",
+                 vcov = vcov(r_byapp[[2]]))
+
+linearHypothesis(r_byapp[[2]], 
+                 "share_deps_closed_app = share_deps_closed_noapp",
+                 vcov = vcov(r_byapp[[2]]))
+```
+
+
 ```{r}
 r_byapp <- list()
 r_byapp[[1]] <- feols(gr_branch ~ share_deps_closed_small*best_app_in_county + share_deps_closed_large_but_not_top4*best_app_in_county + share_deps_closed_top4*best_app_in_county + ..controls | ..fixef_branch,

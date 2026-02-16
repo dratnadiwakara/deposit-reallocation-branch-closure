@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>summary_of_results_Feb162026.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<h1 id="1-branch-year-panel-deposit-growth-of-surviving-branches">1. Branch-Year Panel: Deposit Growth of Surviving Branches</h1>
+<p>This section summarizes results from the branch-level panel analysis. Results are generated by <code>app_2010_2019_branch_regression.qmd</code>. Standard errors are clustered by branch (UNINUMBR) in all regressions.</p>
+<p><strong>Basic idea.</strong> The analysis uses a <strong>branch–year</strong> panel to study how deposit growth at surviving branches relates to the intensity of branch closures in the same county. The focus is on <strong>incumbent</strong> banks (those that did not close branches in that county-year) and on reallocation of deposits from closed branches to surviving branches across banks within a county.</p>
+<p><strong>Unit of observation.</strong> Branch–year. Each observation is a branch that existed at both <em>t</em>−1 and <em>t</em>+1 (survivors). The main regressor is the county-year share of deposits held by branches that closed, measuring closure exposure in the local market.</p>
+<p><strong>Outcome.</strong> Branch deposit growth (<code>gr_branch</code>): change in branch deposits from <em>t</em>−1 to <em>t</em>+1 divided by <em>t</em>−1 deposits.</p>
+<p><strong>Main regressor.</strong> County-year share of deposits held by branches that closed (<code>share_deps_closed</code>), i.e., deposits at closed branches as a fraction of total county deposits at <em>t</em>−1.</p>
+<p><strong>Sample construction.</strong> Incumbent banks only. Branch-year observations where the branch existed at both <em>t</em>−1 and <em>t</em>+1. Counties with at least 3 banks (lagged). Years 2012–2024. For each period we report two specifications: branch fixed effects (UNINUMBR + state×year + bank×year) and state×year + bank×year only (no branch FE), so the first column in each pair is within-branch variation.</p>
+<hr>
+<h2 id="11-baseline-result">1.1 Baseline result</h2>
+<p><strong>Regression.</strong> OLS with fixed effects. Dependent variable: branch deposit growth (<code>gr_branch</code>). Main regressor: county-year share of deposits at closed branches (<code>share_deps_closed</code>). Controls: <code>log1p(banks_county_lag1)</code>, <code>county_dep_growth_t4_t1</code>, <code>log1p(dep_lag1_aligned)</code>, <code>log_population_density</code>, <code>lag_county_deposit_hhi</code>, <code>lag_establishment_gr</code>, <code>lag_payroll_gr</code>, <code>lag_hmda_mtg_amt_gr</code>, <code>lag_cra_loan_amount_amt_lt_1m_gr</code>, <code>lmi</code>. Fixed effects: either branch (UNINUMBR) + state×year + bank×year, or state×year + bank×year only. Standard errors clustered by UNINUMBR.</p>
+<p><strong>Sample.</strong> Incumbent banks only. Models 1–2: 2012–2019; Models 3–4: 2020–2024. Within each period, column 1 = branch FE, column 2 = state×year + bank×year.</p>
+<pre class="hljs"><code><div>                                    model 1    model 2    model 3    model 4
+                                  2012-2019  2012-2019  2020-2024  2020-2024
+Dependent Var.:                   gr_branch  gr_branch  gr_branch  gr_branch
+                                                                            
+share_deps_closed                 0.0752***  0.1298***  0.0121     0.0524** 
+                                 (0.0182)   (0.0222)   (0.0203)   (0.0234)  
+log1p(banks_county_lag1)         -0.0177*    0.0321*** -0.0585***  0.0236***
+                                 (0.0105)   (0.0023)   (0.0159)   (0.0030)  
+county_dep_growth_t4_t1           0.0007     0.0041**  -0.0002    -0.0002   
+                                 (0.0020)   (0.0021)   (0.0005)   (0.0005)  
+log1p(dep_lag1_aligned)          -0.5082*** -0.1133*** -0.6115*** -0.1229***
+                                 (0.0062)   (0.0012)   (0.0116)   (0.0017)  
+log_population_density            0.0475***  0.0161***  0.0295     0.0111***
+                                 (0.0111)   (0.0011)   (0.0250)   (0.0015)  
+lag_county_deposit_hhi            0.0138     0.0321***  0.0361    -0.0012   
+                                 (0.0237)   (0.0086)   (0.0294)   (0.0106)  
+lag_establishment_gr              0.4579***  1.042***  -0.0755     1.008*** 
+                                 (0.0697)   (0.0693)   (0.1611)   (0.0962)  
+lag_payroll_gr                    0.1102***  0.1924*** -0.2067***  0.0473   
+                                 (0.0211)   (0.0237)   (0.0500)   (0.0382)  
+lag_hmda_mtg_amt_gr               0.0017    -0.0105     0.0187**   0.0403***
+                                 (0.0087)   (0.0101)   (0.0095)   (0.0108)  
+lag_cra_loan_amount_amt_lt_1m_gr  0.0072    -0.0034    -0.0108    -0.0133*  
+                                 (0.0047)   (0.0057)   (0.0069)   (0.0078)  
+lmi                               0.0224*** -0.0195***  0.0236**  -0.0114*  
+                                 (0.0076)   (0.0045)   (0.0111)   (0.0061)  
+Fixed-Effects:                   ---------- ---------- ---------- ----------
+UNINUMBR                                Yes         No        Yes         No
+state_yr                                Yes        Yes        Yes        Yes
+bank_yr                                 Yes        Yes        Yes        Yes
+________________________________ __________ __________ __________ __________
+S.E.: Clustered                  by: UNIN.. by: UNIN.. by: UNIN.. by: UNIN..
+Observations                        502,944    509,904    262,678    270,672
+R2                                  0.66035    0.28202    0.74717    0.34515
+Within R2                           0.30334    0.13094    0.35441    0.12660
+--- 
+Signif. codes: 0 '***' 0.01 '**' 0.05 '*' 0.1 ' ' 1
+</div></code></pre>
+<h2 id="12-closure-exposure-by-closer-type">1.2 Closure exposure by closer type</h2>
+<p><strong>Regression.</strong> Same outcome, controls, and fixed-effect options as in 1.1. Closure exposure is decomposed by the type of the closing bank. For 2012–2019: <code>share_deps_closed_app</code> (non–top-4 with app), <code>share_deps_closed_noapp</code> (no app), <code>share_deps_closed_top4</code>. For 2020–2024: <code>share_deps_closed_small</code>, <code>share_deps_closed_large_but_not_top4</code>, <code>share_deps_closed_top4</code>. Each period shows two columns with branch FE and two with state×year + bank×year only.</p>
+<p><strong>Sample.</strong> Incumbent banks only. Models 1–2: 2012–2019; Models 3–4: 2020–2024.</p>
+<pre class="hljs"><code><div>                                                  model 1              model 2               model 3               model 4
+                                     2020-2024 (best app) 2020-2024 (best app) 2020-2024 (above med) 2020-2024 (above med)
+Dependent Var.:                                 gr_branch            gr_branch             gr_branch             gr_branch
+                                                                                                                          
+share_deps_closed_app                           0.1035***            0.1490***                                            
+                                               (0.0238)             (0.0295)                                              
+share_deps_closed_noapp                         0.1618***            0.3114***                                            
+                                               (0.0478)             (0.0629)                                              
+share_deps_closed_top4                         -0.0065               0.0278               -0.0462               -0.0309   
+                                               (0.0336)             (0.0393)              (0.0309)              (0.0377)  
+share_deps_closed_large_but_not_top4                                                       0.0790**              0.1205***
+                                                                                          (0.0397)              (0.0421)  
+share_deps_closed_small                                                                    0.0350                0.1147***
+                                                                                          (0.0365)              (0.0404)  
+log1p(banks_county_lag1)                       -0.0176*              0.0323***            -0.0582***             0.0238***
+                                               (0.0105)             (0.0023)              (0.0159)              (0.0030)  
+county_dep_growth_t4_t1                         0.0007               0.0041**             -0.0002               -0.0003   
+                                               (0.0020)             (0.0021)              (0.0005)              (0.0005)  
+log1p(dep_lag1_aligned)                        -0.5081***           -0.1133***            -0.6115***            -0.1229***
+                                               (0.0062)             (0.0012)              (0.0116)              (0.0017)  
+log_population_density                          0.0475***            0.0161***             0.0294                0.0111***
+                                               (0.0111)             (0.0011)              (0.0250)              (0.0015)  
+lag_county_deposit_hhi                          0.0142               0.0329***             0.0369                0.0004   
+                                               (0.0237)             (0.0086)              (0.0294)              (0.0106)  
+lag_establishment_gr                            0.4576***            1.040***             -0.0745                1.007*** 
+                                               (0.0697)             (0.0693)              (0.1611)              (0.0962)  
+lag_payroll_gr                                  0.1105***            0.1930***            -0.2051***             0.0477   
+                                               (0.0211)             (0.0237)              (0.0500)              (0.0382)  
+lag_hmda_mtg_amt_gr                             0.0008              -0.0111                0.0183*               0.0396***
+                                               (0.0087)             (0.0101)              (0.0095)              (0.0108)  
+lag_cra_loan_amount_amt_lt_1m_gr                0.0071              -0.0034               -0.0109               -0.0134*  
+                                               (0.0047)             (0.0057)              (0.0069)              (0.0078)  
+lmi                                             0.0222***           -0.0194***             0.0236**             -0.0107*  
+                                               (0.0076)             (0.0045)              (0.0111)              (0.0061)  
+Fixed-Effects:                                 ----------           ----------            ----------            ----------
+UNINUMBR                                              Yes                   No                   Yes                    No
+state_yr                                              Yes                  Yes                   Yes                   Yes
+bank_yr                                               Yes                  Yes                   Yes                   Yes
+____________________________________           __________           __________            __________            __________
+S.E.: Clustered                                by: UNIN..           by: UNIN..            by: UNIN..            by: UNIN..
+Observations                                      502,944              509,904               262,678               270,672
+R2                                                0.66036              0.28205               0.74718               0.34518
+Within R2                                         0.30337              0.13098               0.35444               0.12665
+--- 
+Signif. codes: 0 '***' 0.01 '**' 0.05 '*' 0.1 ' ' 1
+</div></code></pre>
+<p><strong>Note.</strong> Model 1 (with branch FE): no significant difference between app and no-app closure effects. Model 2 (without branch FE): significant difference at the 5% level.</p>
+<h2 id="13-closure-exposure-%C3%97-best-app--above-median-app-in-county-2020%E2%80%932024">1.3 Closure exposure × best app / above median app in county (2020–2024)</h2>
+<p><strong>Regression.</strong> Same outcome and controls. For 2020–2024, closure exposure by closer size (<code>share_deps_closed_small</code>, <code>share_deps_closed_large_but_not_top4</code>, <code>share_deps_closed_top4</code>) is interacted with (i) whether the incumbent bank has the best app in the county (<code>best_app_in_county</code>), or (ii) whether the incumbent is above the median app rating in the county (<code>above_median_app_in_county</code>). Columns 1–2: best-app interactions; columns 3–4: above-median interactions. Within each pair: branch FE vs state×year + bank×year.</p>
+<p><strong>Sample.</strong> Incumbent banks only, 2020–2024.</p>
+<pre class="hljs"><code><div>                                                                               model 1              model 2               model 3               model 4
+                                                                  2020-2024 (best app) 2020-2024 (best app) 2020-2024 (above med) 2020-2024 (above med)
+Dependent Var.:                                                              gr_branch            gr_branch             gr_branch             gr_branch
+                                                                                                                                                       
+best_app_in_county x share_deps_closed_top4                                  0.0441              -0.0961                                               
+                                                                            (0.0707)             (0.0711)                                              
+share_deps_closed_top4                                                      -0.0507              -0.0213               -0.0949*              -0.0319   
+                                                                            (0.0336)             (0.0411)              (0.0555)              (0.0631)  
+above_median_app_in_county x share_deps_closed_top4                                                                     0.0838                0.0010   
+                                                                                                                       (0.0652)              (0.0774)  
+best_app_in_county x share_deps_closed_large_but_not_top4                   -0.0295              -0.0607                                               
+                                                                            (0.1090)             (0.1233)                                              
+share_deps_closed_large_but_not_top4                                         0.0816*              0.1253***             0.0667                0.0779   
+                                                                            (0.0423)             (0.0445)              (0.0623)              (0.0626)  
+above_median_app_in_county x share_deps_closed_large_but_not_top4                                                       0.0246                0.0789   
+                                                                                                                       (0.0798)              (0.0819)  
+share_deps_closed_small x best_app_in_county                                -0.1827*             -0.0041                                               
+                                                                            (0.0950)             (0.1064)                                              
+share_deps_closed_small                                                      0.0573               0.1140***             0.0395                0.0984*  
+                                                                            (0.0398)             (0.0437)              (0.0505)              (0.0575)  
+share_deps_closed_small x above_median_app_in_county                                                                   -0.0100                0.0305   
+                                                                                                                       (0.0722)              (0.0795)  
+best_app_in_county                                                          -0.0048              -0.0143***                                            
+                                                                            (0.0051)             (0.0036)                                              
+log1p(banks_county_lag1)                                                    -0.0586***            0.0229***            -0.0574***             0.0250***
+                                                                            (0.0159)             (0.0030)              (0.0159)              (0.0030)  
+county_dep_growth_t4_t1                                                     -0.0002              -0.0003               -0.0002               -0.0003   
+                                                                            (0.0005)             (0.0005)              (0.0005)              (0.0005)  
+log1p(dep_lag1_aligned)                                                     -0.6115***           -0.1229***            -0.6115***            -0.1228***
+                                                                            (0.0116)             (0.0017)              (0.0116)              (0.0017)  
+log_population_density                                                       0.0295               0.0108***             0.0292                0.0108***
+                                                                            (0.0249)             (0.0015)              (0.0249)              (0.0015)  
+lag_county_deposit_hhi                                                       0.0361               0.0037                0.0361                0.0012   
+                                                                            (0.0294)             (0.0107)              (0.0294)              (0.0106)  
+lag_establishment_gr                                                        -0.0753               1.004***             -0.0726                0.9988***
+                                                                            (0.1611)             (0.0962)              (0.1611)              (0.0962)  
+lag_payroll_gr                                                              -0.2053***            0.0472               -0.2056***             0.0466   
+                                                                            (0.0500)             (0.0382)              (0.0500)              (0.0382)  
+lag_hmda_mtg_amt_gr                                                          0.0182*              0.0385***             0.0185*               0.0394***
+                                                                            (0.0095)             (0.0108)              (0.0095)              (0.0108)  
+lag_cra_loan_amount_amt_lt_1m_gr                                            -0.0108              -0.0127               -0.0109               -0.0132*  
+                                                                            (0.0069)             (0.0078)              (0.0069)              (0.0078)  
+lmi                                                                          0.0236**            -0.0106*               0.0237**             -0.0104*  
+                                                                            (0.0111)             (0.0061)              (0.0111)              (0.0061)  
+above_median_app_in_county                                                                                             -0.0080*              -0.0088** 
+                                                                                                                       (0.0045)              (0.0035)  
+Fixed-Effects:                                                              ----------           ----------            ----------            ----------
+UNINUMBR                                                                           Yes                   No                   Yes                    No
+state_yr                                                                           Yes                  Yes                   Yes                   Yes
+bank_yr                                                                            Yes                  Yes                   Yes                   Yes
+________________________________________                                    __________           __________            __________            __________
+S.E.: Clustered                                                             by: UNIN..           by: UNIN..            by: UNIN..            by: UNIN..
+Observations                                                                   262,678              270,672               262,678               270,672
+R2                                                                             0.74719              0.34524               0.74719               0.34521
+Within R2                                                                      0.35446              0.12673               0.35447               0.12668
+---
+Signif. codes: 0 '***' 0.01 '**' 0.05 '*' 0.1 ' ' 1
+</div></code></pre>
+<h2 id="14-closure-exposure-%C3%97-incumbent-bank-type">1.4 Closure exposure × incumbent bank type</h2>
+<p><strong>Regression.</strong> Same outcome and controls. <code>share_deps_closed</code> is interacted with incumbent bank type: <code>top4_bank</code> (top-4 bank) and <code>large_but_not_top4_bank</code> (assets &gt; $100B, not top-4). The interaction lets the association between closure exposure and deposit growth vary by incumbent type (top-4, large-but-not-top-4, other). Columns 1–2: 2012–2019; columns 3–4: 2020–2024. Within each period: branch FE vs state×year + bank×year.</p>
+<p><strong>Sample.</strong> Incumbent banks only. Models 1–2: 2012–2019; Models 3–4: 2020–2024.</p>
+<pre class="hljs"><code><div>                                               model 1         model 2    model 3        model 4
+                                             2012-2019       2012-2019  2020-2024      2020-2024
+Dependent Var.:                              gr_branch       gr_branch  gr_branch      gr_branch
+                                                                                                
+share_deps_closed                            0.0968***       0.1964***  0.0474**       0.0660** 
+                                            (0.0232)        (0.0292)   (0.0240)       (0.0306)  
+share_deps_closed x top4_bank               -0.1137**       -0.2414*** -0.0949*        0.0039   
+                                            (0.0443)        (0.0551)   (0.0499)       (0.0618)  
+share_deps_closed x large_but_not_top4_bank -0.0244         -0.1386**  -0.0937*       -0.0579   
+                                            (0.0469)        (0.0544)   (0.0561)       (0.0555)  
+top4_bank                                    7.541***       -2.844     -0.4509         1.522    
+                                            (1.188)    (11,394.1)      (5.312)    (5,223.4)     
+large_but_not_top4_bank                     -0.4423          2.257      2.709                   
+                                            (1.297)     (3,390.6)      (1.809)                  
+log1p(banks_county_lag1)                    -0.0175*         0.0322*** -0.0590***      0.0236***
+                                            (0.0105)        (0.0023)   (0.0159)       (0.0030)  
+county_dep_growth_t4_t1                      0.0007          0.0041*   -0.0002        -0.0002   
+                                            (0.0020)        (0.0021)   (0.0005)       (0.0005)  
+log1p(dep_lag1_aligned)                     -0.5082***      -0.1133*** -0.6115***     -0.1229***
+                                            (0.0062)        (0.0012)   (0.0116)       (0.0017)  
+log_population_density                       0.0476***       0.0160***  0.0294         0.0111***
+                                            (0.0111)        (0.0011)   (0.0250)       (0.0015)  
+lag_county_deposit_hhi                       0.0132          0.0321***  0.0372        -0.0010   
+                                            (0.0237)        (0.0086)   (0.0294)       (0.0107)  
+lag_establishment_gr                         0.4580***       1.040***  -0.0761         1.008*** 
+                                            (0.0697)        (0.0693)   (0.1611)       (0.0962)  
+lag_payroll_gr                               0.1101***       0.1923*** -0.2071***      0.0473   
+                                            (0.0211)        (0.0237)   (0.0500)       (0.0382)  
+lag_hmda_mtg_amt_gr                          0.0016         -0.0105     0.0186**       0.0403***
+                                            (0.0087)        (0.0101)   (0.0095)       (0.0108)  
+lag_cra_loan_amount_amt_lt_1m_gr             0.0072         -0.0033    -0.0109        -0.0133*  
+                                            (0.0047)        (0.0057)   (0.0069)       (0.0078)  
+lmi                                          0.0223***      -0.0196***  0.0238**      -0.0113*  
+                                            (0.0076)        (0.0045)   (0.0111)       (0.0061)  
+Fixed-Effects:                              ---------- --------------- ---------- --------------
+UNINUMBR                                           Yes              No        Yes             No
+state_yr                                           Yes             Yes        Yes            Yes
+bank_yr                                            Yes             Yes        Yes            Yes
+________________________________________    __________ _______________ __________ ______________
+S.E.: Clustered                             by: UNIN..    by: UNINUMBR by: UNIN..   by: UNINUMBR
+Observations                                   502,944         509,904    262,678        270,672
+R2                                             0.66038         0.28206    0.74718        0.34515
+Within R2                                      0.30340         0.13099    0.35444        0.12661
+---
+Signif. codes: 0 '***' 0.01 '**' 0.05 '*' 0.1 ' ' 1
+</div></code></pre>
+<h1 id="2-bank%E2%80%93county-panel-deposit-retention-through-remaining-branches">2. Bank–County Panel: Deposit Retention Through Remaining Branches</h1>
+<p>This section summarizes results from the bank–county–year panel analysis. Results are generated by <code>bank_county_year_regression.qmd</code>. Standard errors are clustered by bank (<code>bank_id</code>) in all regressions.</p>
+<p><strong>Basic idea.</strong> The analysis builds a <strong>bank–county–year</strong> panel to study how deposits at <strong>remaining branches</strong> evolve following branch closures. Deposits are observable only through branches; if a bank closes all branches in a county and retains deposits digitally, those deposits do not appear in branch-level data. The analysis is therefore best interpreted as <strong>deposit retention or reallocation through remaining local branches</strong>.</p>
+<p><strong>Unit of observation.</strong> Bank–county–year. For each bank in each county in each year, we aggregate deposits at closed branches (branches that close in year <em>t</em> with deposits at <em>t</em>−1) and at remaining branches (branches that survive and exist at both <em>t</em>−1 and <em>t</em>+1).</p>
+<p><strong>Outcome.</strong> Growth of deposits at remaining branches from <em>t</em>−1 to <em>t</em>+1, normalized by total bank–county deposits at <em>t</em>−1: <code>growth_on_total_t1</code> = (deps_remain_t+1 − deps_remain_t−1) / total_deps_bank_county_t−1.</p>
+<p><strong>Main regressor.</strong> Share of bank–county deposits that were at branches that closed: <code>closure_share</code> = deps_closed_t−1 / total_deps_bank_county_t−1.</p>
+<p><strong>Sample construction.</strong> Base sample: bank–county–years with at least one remaining branch, positive total deposits, and non-missing growth. Growth is winsorized at 5th and 95th percentiles. Main sample: base sample excluding &quot;extreme intensity&quot; observations (closure intensity in the top tail or below 0.01). Fixed effects: bank×year and county×year. Standard errors clustered by bank.</p>
+<hr>
+<h2 id="21-descriptive-statistics">2.1 Descriptive statistics</h2>
+<p><strong>Description.</strong> Mean and standard deviation of the dependent variable (<code>growth_on_total_t1</code>) and of <code>closure_share</code>, by period (2012–2019 vs 2020–2024) and by whether the bank–county–year had any closure (<code>any_closure_t</code> = 0 or 1).</p>
+<pre class="hljs"><code><div>|period   |any_closure|N     |deposit_gr_mean|deposit_gr_sd|closure_share_mean|closure_share_sd|
+|---------|-----------|------|---------------|-------------|------------------|----------------|
+|2012-2019|0          |189817|0.136          |0.287        |0.000             |0.000           |
+|2012-2019|1          |  9770|0.208          |0.241        |0.137             |0.125           |
+|2020-2024|0          |112972|0.177          |0.330        |0.000             |0.000           |
+|2020-2024|1          |  6434|0.276          |0.298        |0.145             |0.127           |
+</div></code></pre>
+<p><strong>Figure: Deposit growth distribution by closure status.</strong> Kernel density of the dependent variable (growth of deposits at remaining branches from <em>t</em>−1 to <em>t</em>+1, normalized by total bank–county deposits at <em>t</em>−1) in the main sample, separately for bank–county–years with any closure (<code>any_closure_t</code> = 1) and with no closure (<code>any_closure_t</code> = 0).</p>
+<p><img src="figures/deposit_growth_density_by_closure.png" alt="Deposit growth density by closure"></p>
+<h2 id="22-main-regressions">2.2 Main regressions</h2>
+<p><strong>Regression.</strong> OLS with fixed effects. Dependent variable: <code>growth_on_total_t1</code> (growth of deposits at remaining branches from <em>t</em>−1 to <em>t</em>+1, divided by total bank–county deposits at <em>t</em>−1). Main regressor: <code>closure_share</code> (share of bank–county deposits at closed branches). Control: <code>log1p(total_deps_bank_county_t1)</code>. Fixed effects: bank×year and county×year. Standard errors clustered by bank.</p>
+<p><strong>Sample.</strong> Main sample (excludes extreme closure intensity). Model 1: all years; Model 2: pre 2012; Model 3: 2012–2019; Model 4: 2020–2024.</p>
+<pre class="hljs"><code><div>                                                All           Pre 2012          2012-2019          2020-2024
+Dependent Var.:                  growth_on_total_t1 growth_on_total_t1 growth_on_total_t1 growth_on_total_t1
+                                                                                                            
+closure_share                             0.6295***          0.5228***          0.6233***          0.6957***
+                                         (0.0216)           (0.0291)           (0.0250)           (0.0425)  
+log1p(total_deps_bank_county_t1)         -0.1662***         -0.1984***         -0.1424***         -0.1536***
+                                         (0.0036)           (0.0048)           (0.0045)           (0.0067)  
+log1p(n_remaining_branches)               0.1876***          0.2268***          0.1551***          0.1747***
+                                         (0.0060)           (0.0070)           (0.0076)           (0.0081)  
+mkt_share_county_t1                       0.3278***          0.3292***          0.3436***          0.3236***
+                                         (0.0138)           (0.0220)           (0.0176)           (0.0277)  
+Fixed-Effects:                   ------------------ ------------------ ------------------ ------------------
+bank_id-YEAR                                    Yes                Yes                Yes                Yes
+county-YEAR                                     Yes                Yes                Yes                Yes
+________________________________ __________________ __________________ __________________ __________________
+S.E.: Clustered                         by: bank_id        by: bank_id        by: bank_id        by: bank_id
+Observations                                463,076            179,960            174,551            108,565
+R2                                          0.54756            0.60541            0.48829            0.52720
+Within R2                                   0.17849            0.23672            0.14464            0.14966
+---
+Signif. codes: 0 '***' 0.01 '**' 0.05 '*' 0.1 ' ' 1
+</div></code></pre>
+<p><strong>Figure: closure_share coefficient over time.</strong> Point estimates and 95% confidence intervals from the main regression (closure_share + controls, bank×year and county×year fixed effects, SEs clustered by bank) run separately for each non-overlapping 3-year window in the main sample. The x-axis is the midpoint year of each window.</p>
+<p><img src="figures/closure_share_coef.png" alt="closure_share coefficient by 3-year window"></p>
+<h2 id="23-main-regressions-closure-share-%C3%97-demographics-sophisticated-above-median-ageincome">2.3 Main regressions: closure share × demographics (sophisticated, above median age/income)</h2>
+<p><strong>Regression.</strong> Same outcome, controls, and fixed effects as in 2.2. <code>closure_share</code> is interacted with county-year demographics: <code>sophisticated</code> (1 if county-year is above median on education and investment-income share), <code>above_median_age</code> (1 if county median age is above year median), and <code>above_median_income</code> (1 if county median income is above year median). Allows the association between closure share and deposit growth at remaining branches to vary with local sophistication and age/income.</p>
+<p><strong>Sample.</strong> Main sample. Columns: All years; Pre 2012; 2012–2019; 2020–2024.</p>
+<pre class="hljs"><code><div>                                                   All           Pre 2012          2012-2019          2020-2024
+Dependent Var.:                     growth_on_total_t1 growth_on_total_t1 growth_on_total_t1 growth_on_total_t1
+                                                                                                               
+closure_share                                0.7134***          0.7088***          0.7118***          0.6908***
+                                            (0.0303)           (0.0498)           (0.0346)           (0.0515)  
+closure_share x sophisticated               -0.0064            -0.1367***         -0.0199             0.0527   
+                                            (0.0296)           (0.0525)           (0.0386)           (0.0542)  
+closure_share x above_median_age             0.0205             0.0473             0.0288            -0.0555   
+                                            (0.0272)           (0.0506)           (0.0346)           (0.0588)  
+closure_share x above_median_income         -0.1261***         -0.1667***         -0.1199**          -0.0171   
+                                            (0.0362)           (0.0604)           (0.0472)           (0.0538)  
+log1p(total_deps_bank_county_t1)            -0.1660***         -0.1977***         -0.1424***         -0.1538***
+                                            (0.0036)           (0.0048)           (0.0045)           (0.0067)  
+log1p(n_remaining_branches)                  0.1867***          0.2249***          0.1551***          0.1743***
+                                            (0.0059)           (0.0070)           (0.0075)           (0.0082)  
+mkt_share_county_t1                          0.3344***          0.3398***          0.3467***          0.3272***
+                                            (0.0134)           (0.0212)           (0.0176)           (0.0277)  
+Fixed-Effects:                      ------------------ ------------------ ------------------ ------------------
+bank_id-YEAR                                       Yes                Yes                Yes                Yes
+county-YEAR                                        Yes                Yes                Yes                Yes
+___________________________________ __________________ __________________ __________________ __________________
+S.E.: Clustered                            by: bank_id        by: bank_id        by: bank_id        by: bank_id
+Observations                                   458,123            177,317            173,135            107,671
+R2                                             0.54766            0.60585            0.48850            0.52688
+Within R2                                      0.17832            0.23623            0.14498            0.14974
+---
+Signif. codes: 0 '***' 0.01 '**' 0.05 '*' 0.1 ' ' 1
+</div></code></pre>
+<h2 id="24-closure-share-%C3%97-app-has-app--large-good-vs-bad-app">2.4 Closure share × app (has app / large good vs bad app)</h2>
+<p><strong>Regression.</strong> Same outcome, control, and fixed effects as in 2.2. <code>closure_share</code> is interacted with app indicators. Model 1 (2012–2019): interaction with <code>has_app</code> (1 if bank has a mobile app). Models 2–4 (2020–2024): interactions with <code>large_bank_has_app</code> and <code>large_bank_no_app</code>; with <code>large_good_app</code> and <code>large_bad_app</code> (large bank with app rating above vs at/below year median); and with <code>large_good_app_cumulative</code> and <code>large_bad_app_cumulative</code>. Allows the association between closure share and deposit growth at remaining branches to vary by whether the bank has an app and by app quality.</p>
+<p><strong>Sample.</strong> Main sample. Model 1: 2012–2019; Models 2–4: 2020–2024.</p>
+<pre class="hljs"><code><div>                                          2012-2019: has_app 2020-2024: large.. 2020-2024: yearl.. 2020-2024: cum g..
+Dependent Var.:                           growth_on_total_t1 growth_on_total_t1 growth_on_total_t1 growth_on_total_t1
+                                                                                                                     
+closure_share                                      0.5830***          0.6238***          0.6239***          0.6239***
+                                                  (0.0488)           (0.0337)           (0.0337)           (0.0337)  
+closure_share x has_app                            0.0503                                                            
+                                                  (0.0557)                                                           
+closure_share x large_bank_has_app                                    0.1254                                         
+                                                                     (0.0818)                                        
+closure_share x large_bank_no_app                                     0.1720**                                       
+                                                                     (0.0859)                                        
+closure_share x large_good_app                                                           0.1061                      
+                                                                                        (0.0680)                     
+closure_share x large_bad_app                                                            0.1596                      
+                                                                                        (0.0978)                     
+closure_share x large_good_app_cumulative                                                                   0.0426   
+                                                                                                           (0.0915)  
+closure_share x large_bad_app_cumulative                                                                    0.1803** 
+                                                                                                           (0.0834)  
+has_app                                           -0.7605                                                            
+                                              (5,772.2)                                                              
+log1p(total_deps_bank_county_t1)                  -0.1424***         -0.1535***         -0.1535***         -0.1535***
+                                                  (0.0045)           (0.0067)           (0.0067)           (0.0067)  
+log1p(n_remaining_branches)                        0.1551***          0.1743***          0.1743***          0.1743***
+                                                  (0.0076)           (0.0082)           (0.0082)           (0.0081)  
+mkt_share_county_t1                                0.3436***          0.3233***          0.3233***          0.3232***
+                                                  (0.0176)           (0.0278)           (0.0278)           (0.0278)  
+Fixed-Effects:                            ------------------ ------------------ ------------------ ------------------
+bank_id-YEAR                                             Yes                Yes                Yes                Yes
+county-YEAR                                              Yes                Yes                Yes                Yes
+________________________________________  __________________ __________________ __________________ __________________
+S.E.: Clustered                                  by: bank_id        by: bank_id        by: bank_id        by: bank_id
+Observations                                         174,551            108,565            108,565            108,565
+R2                                                   0.48830            0.52728            0.52728            0.52730
+Within R2                                            0.14465            0.14981            0.14981            0.14985
+---
+Signif. codes: 0 '***' 0.01 '**' 0.05 '*' 0.1 ' ' 1
+</div></code></pre>
+<h2 id="25-closure-share-%C3%97-drop-in-visits--high-drop-in-visits-2020%E2%80%932024">2.5 Closure share × drop-in visits / high drop in visits (2020–2024)</h2>
+<p><strong>Regression.</strong> Same outcome, control, and fixed effects. <code>closure_share</code> is interacted with branch visit measures: Model 1: <code>drop_in_visits</code> (continuous); Model 2: <code>high_drop_visits</code> (indicator for high drop-in visit intensity). Models 3–4: same as Model 2, split by <code>large_bank</code> (assets &gt; $100B vs not). Allows the association between closure share and deposit growth to vary with branch traffic and by bank size.</p>
+<p><strong>Note on <code>drop_in_visits</code>.</strong> Total branch visits per bank are summed by year from visit data. <code>drop_in_visits</code> = (total visits in 2019 − total visits in 2021) / total visits in 2019 (fractional drop in visits from 2019 to 2021), winsorized at the 1st and 99th percentiles. <code>high_drop_visits</code> = 1 if <code>drop_in_visits</code> is above the median, 0 otherwise.</p>
+<p><strong>Sample.</strong> Main sample, 2020–2024. Models 1–2: full 2020–2024; Models 3–4: large banks only and small banks only.</p>
+<pre class="hljs"><code><div>                                       Drop (cont.)        Drop (high)   High drop: large   High drop: small
+Dependent Var.:                  growth_on_total_t1 growth_on_total_t1 growth_on_total_t1 growth_on_total_t1
+                                                                                                            
+closure_share                             0.5900***          0.5579***          0.4005***          0.5512***
+                                         (0.0790)           (0.0596)           (0.1352)           (0.0721)  
+closure_share x drop_in_visits            0.2424*                                                           
+                                         (0.1472)                                                           
+closure_share x high_drop_visits                             0.1569**           0.3866***          0.0726   
+                                                            (0.0743)           (0.1111)           (0.0812)  
+log1p(total_deps_bank_county_t1)         -0.1524***         -0.1523***         -0.1764***         -0.1503***
+                                         (0.0072)           (0.0072)           (0.0305)           (0.0042)  
+log1p(n_remaining_branches)               0.1723***          0.1723***          0.1550***          0.1803***
+                                         (0.0086)           (0.0086)           (0.0319)           (0.0071)  
+mkt_share_county_t1                       0.3284***          0.3284***          0.4921***          0.3148***
+                                         (0.0300)           (0.0300)           (0.1584)           (0.0216)  
+Fixed-Effects:                   ------------------ ------------------ ------------------ ------------------
+bank_id-YEAR                                    Yes                Yes                Yes                Yes
+county-YEAR                                     Yes                Yes                Yes                Yes
+________________________________ __________________ __________________ __________________ __________________
+S.E.: Clustered                         by: bank_id        by: bank_id        by: bank_id        by: bank_id
+Observations                                101,275            101,275             20,466             76,987
+R2                                          0.52177            0.52179            0.57609            0.55850
+Within R2                                   0.14634            0.14638            0.17514            0.14579
+---
+Signif. codes: 0 '***' 0.01 '**' 0.05 '*' 0.1 ' ' 1
+</div></code></pre>
+<h2 id="26-closure-share-%C3%97-large-bank">2.6 Closure share × large bank</h2>
+<p><strong>Regression.</strong> Same outcome, control, and fixed effects. <code>closure_share</code> is interacted with <code>large_bank</code> (1 if bank assets &gt; $100B, 0 otherwise). The interaction allows the association between closure share and deposit growth at remaining branches to vary by bank size.</p>
+<p><strong>Sample.</strong> Model 1: base sample (all years, includes extreme intensity); Model 2: main sample (all years); Models 3–5: main sample by subperiod—pre 2012, 2012–2019, 2020–2024.</p>
+<pre class="hljs"><code><div>                                            model 1            model 2            model 3            model 4            model 5
+                                               Base               Main           Pre 2012          2012-2019          2020-2024
+Dependent Var.:                  growth_on_total_t1 growth_on_total_t1 growth_on_total_t1 growth_on_total_t1 growth_on_total_t1
+                                                                                                                               
+closure_share                             0.3720***          0.4361***          0.3591***          0.4350***          0.5176***
+                                         (0.0140)           (0.0159)           (0.0319)           (0.0230)           (0.0276)  
+closure_share x large_bank                0.2415***          0.2446***          0.2197***          0.2483***          0.1947***
+                                         (0.0278)           (0.0295)           (0.0567)           (0.0332)           (0.0669)  
+large_bank                               -1.233             -0.6423            -0.6855             1.124                       
+                                       (303.2)            (498.5)            (353.0)          (3,676.7)                        
+log1p(total_deps_bank_county_t1)         -0.0565***         -0.0577***         -0.0696***         -0.0483***         -0.0523***
+                                         (0.0014)           (0.0014)           (0.0019)           (0.0015)           (0.0028)  
+Fixed-Effects:                   ------------------ ------------------ ------------------ ------------------ ------------------
+bank_id-YEAR                                    Yes                Yes                Yes                Yes                Yes
+county-YEAR                                     Yes                Yes                Yes                Yes                Yes
+________________________________ __________________ __________________ __________________ __________________ __________________
+S.E.: Clustered                         by: bank_id        by: bank_id        by: bank_id        by: bank_id        by: bank_id
+Observations                                497,040            492,521            198,644            181,868            112,009
+R2                                          0.52614            0.52887            0.56546            0.47391            0.53530
+Within R2                                   0.10785            0.10620            0.14011            0.08518            0.09006
+---
+Signif. codes: 0 '***' 0.01 '**' 0.05 '*' 0.1 ' ' 1
+
+</div></code></pre>
+<h1 id="3-event-studies">3 Event Studies</h1>
+<h2 id="31-total-deposits-at-bank-county-year-all-observed-branches">3.1 Total deposits at bank-county-year (all observed branches)</h2>
+<p><strong>Method.</strong> Sun and Abraham (2021)–style event study. Outcome: log(1 + total deposits) at the bank–county–year level, where total deposits are the sum of deposits across all observed branches of the bank in that county and year (including branches that will close or have closed). Treatment is the first year in which the bank has any branch closure in that county (“cohort” = first closure year). Specification: <code>log1p(total_deps_all_branches) ~ sunab(cohort, YEAR, ref.p = -1) | unit_id + YEAR</code>, with standard errors clustered by bank. The event-time coefficients are normalized to zero at <em>t</em> = −1 (year before first closure).</p>
+<p><strong>Sample.</strong> Bank–county–years are included if: (i) the bank–county is ever treated (has at least one closure), and the year is within [cohort − 3, cohort + 3]; or (ii) the bank–county is never treated, and it is in a 50% random sample of never-treated bank–counties (same never-treated units used across years). Never-treated units are assigned cohort = 10000 for the sunab implementation. The analysis is run separately for three periods: Pre 2012; 2012–2019; and 2020–2024. The figure superimposes the event-time coefficients from these three regressions (with 95% confidence intervals) in a single plot.</p>
+<p><img src="figures/sunab_total_deposits.png" alt="Sun &amp; Abraham: all branch deposits by period"></p>
+<h2 id="32-deposits-at-surviving-branches-only-consistent-branch-set">3.2 Deposits at surviving branches only (consistent branch set)</h2>
+<p><strong>Method.</strong> Sun and Abraham (2021)–style event study with a <strong>consistent branch set</strong>: the outcome is log(1 + deposits) at the bank–county–year level counting only deposits at branches that do <strong>not</strong> close in the cohort year. For each treated bank–county, branches that close in the first-closure year are identified and excluded from the deposit series in all years, so the same set of “surviving” branches is used before and after the event. This removes the mechanical drop in total deposits that would otherwise come from closing branches. Specification: <code>log1p(deps_consistent) ~ sunab(cohort, YEAR, ref.p = -1) | unit_id + YEAR</code>, with standard errors clustered by bank. Event-time coefficients are normalized to zero at <em>t</em> = −1.</p>
+<p><strong>Sample.</strong> Same as in 3.1: treated bank–counties in [cohort − 3, cohort + 3]; never-treated from a random sample (share set by <code>params$never_treated_share</code>); cohort = 10000 for never-treated. The analysis is run separately for Pre 2012, 2012–2019, and 2020–2024. The figure superimposes the event-time coefficients from these three regressions (with 95% confidence intervals).</p>
+<p><img src="figures/sunab_deposits_of_survivors.png" alt="Sun &amp; Abraham: consistent branch set (surviving branches only)"></p>
+<h2 id="33-robustness-number-of-remaining-branches">3.3 Robustness: Number of remaining branches</h2>
+<p><strong>Purpose.</strong> As a robustness check, the same Sun and Abraham setup is applied to the <strong>number of remaining branches</strong> at the bank–county–year level. If branch closures are concentrated at the event year (no systematic pre-trend in branch counts), the event-time coefficients for log(1 + n_remaining_branches) should be close to zero before <em>t</em> = 0 and move only at <em>t</em> = 0 when closures occur.</p>
+<p><strong>Method.</strong> Outcome: log(1 + n_remaining_branches). Same cohort definition (first closure year), same sample (treated in [cohort − 3, cohort + 3], sampled never-treated), and same specification: <code>log1p(n_remaining_branches) ~ sunab(cohort, YEAR, ref.p = -1) | unit_id + YEAR</code>, SEs clustered by bank. Single regression over all years (no period split).</p>
+<p><strong>Interpretation.</strong> The figure shows that the number of remaining branches is essentially flat before the event and drops at <em>t</em> = 0, consistent with closures occurring at the event year.</p>
+<p><img src="figures/sunab_n_remaining_branches.png" alt="Sun &amp; Abraham: number of remaining branches (robustness)"></p>
+
+</body>
+</html>

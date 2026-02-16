@@ -25,6 +25,8 @@ library(DescTools)
 library(ggfixest)
 library(simplermarkdown)
 library(gridExtra)
+library(readxl)
+library(dplyr)
 
 setFixest_nthreads(0)
 
@@ -350,11 +352,66 @@ bank_change[, high_drop_visits := as.integer(drop_in_visits > median(drop_in_vis
 cat("Computed visit decline for", nrow(bank_change), "banks.\n")
 
 ```
+
+```{r}
+# Read county–ZIP crosswalk (Dec 2019) and ZIP-level demographics panel
+county_zip_122019 <- as.data.table(readxl::read_excel("C:/OneDrive/data/county_zip_122019.xlsx"))
+zip_demo <- readRDS("C:/OneDrive/data/nrs_branch_closure/zip_demographics_panel.rds")
+setDT(zip_demo)
+
+# Align keys: county as 5-digit character, ZIP/zip for merge
+county_zip_122019[, county := str_pad(as.character(COUNTY), 5, "left", "0")]
+county_zip_122019[, ZIP := as.character(ZIP)]
+zip_demo[, zip := as.character(zip)]
+
+# Join zip_demo to crosswalk on ZIP (each zip replicated per county with TOT_RATIO)
+zip_demo_cw <- merge(
+  zip_demo,
+  county_zip_122019[, .(ZIP, county, TOT_RATIO)],
+  by.x = "zip", by.y = "ZIP",
+  allow.cartesian = TRUE
+)
+
+# Numeric columns to aggregate to county-year using TOT_RATIO as weight
+# (weighted sum: county gets sum(value * TOT_RATIO) over ZIPs in that county)
+key_chars <- c("median_income", "median_age", "pct_college_educated", "capital_gain_frac", "dividend_frac")
+key_chars <- intersect(key_chars, names(zip_demo_cw))
+num_cols <- key_chars
+
+county_demo <- zip_demo_cw[,
+  lapply(.SD, function(x) sum(as.numeric(x) * TOT_RATIO, na.rm = TRUE)),
+  by = .(county, yr),
+  .SDcols = num_cols
+]
+setnames(county_demo, "yr", "YEAR")
+
+# Create bins by year (median split) and sophistication indicators in county_demo
+county_demo[, paste0(key_chars, "_q") := lapply(.SD, function(x) ntile(x, 2)), by = YEAR, .SDcols = key_chars]
+
+
+# Sophistication (education + investment income only)
+county_demo[, sophisticated := fifelse(
+  !is.na(dividend_frac) & pct_college_educated_q == 2L &
+    (dividend_frac_q == 2L | capital_gain_frac_q == 2L), 1L,
+  fifelse(!is.na(dividend_frac), 0L, NA_integer_)
+)]
+
+# Above-median dummies (by year)
+county_demo[, above_median_age := as.integer(median_age > median(median_age, na.rm = TRUE)), by = YEAR]
+county_demo[, above_median_income := as.integer(median_income > median(median_income, na.rm = TRUE)), by = YEAR]
+
+# Merge county-level demographics (and sophistication) into bank_cty_yr
+bank_cty_yr <- merge(bank_cty_yr, county_demo, by = c("county", "YEAR"), all.x = TRUE)
+```
+
+
+
 ```{r}
 cat("\n=== DEFINING REGRESSION SAMPLES ===\n")
 
 # Add top4 flag (time-invariant)
 bank_cty_yr[, top4_bank := as.integer(bank_id %in% params$top4_cert)]
+bank_cty_yr[, family_income := median_income]
 
 reg_base <- bank_cty_yr[
   YEAR >= params$start_year & YEAR <= params$end_year &
@@ -411,6 +468,38 @@ setFixest_etable(
 ```
 
 
+```{r}
+reg_main[, period := fcase(
+  YEAR %in% 2012:2019, "2012-2019",
+  YEAR >= 2020,        "2020-2024",
+  default = NA_character_
+)]
+
+desc_stats <- reg_main[!is.na(period), .(
+  N = .N,
+  deposit_gr_mean = round(mean(growth_on_total_t1, na.rm = TRUE), 3),
+  deposit_gr_sd   = round(sd(growth_on_total_t1, na.rm = TRUE), 3),
+  closure_share_mean = round(mean(closure_share, na.rm = TRUE), 3),
+  closure_share_sd   = round(sd(closure_share, na.rm = TRUE), 3)
+), keyby = .(period, any_closure_t)]
+
+setnames(desc_stats, "any_closure_t", "any_closure")
+md_table(desc_stats)
+
+reg_main[, period := NULL]
+
+```
+
+```{r}
+p_density <- ggplot(reg_main, aes(x = growth_on_total_t1, fill = factor(any_closure_t))) +
+  geom_density(alpha = 0.5) +
+  labs(x = "Deposit Growth (t-1 to t+1, / total t-1)", y = "Density") +
+  theme_minimal()
+
+# ggsave("docs/figures/deposit_growth_density_by_closure.png", plot = p_density, width = 6, height = 4, dpi = 150)
+p_density
+
+```
 
 ```{r}
 cat("\n=== RUNNING MAIN REGRESSIONS ===\n")
@@ -442,7 +531,7 @@ coef_by_year <- rbindlist(lapply(years, function(y) {
   data.table(year = y + 1L, coef = as.numeric(c), se = as.numeric(se), n = nobs(fit))
 }), fill = TRUE)
 
-ggplot(coef_by_year, aes(x = year, y = coef)) +
+g <- ggplot(coef_by_year, aes(x = year, y = coef)) +
   geom_point() +
   geom_line() +
   geom_errorbar(aes(ymin = coef - 1.96 * se, ymax = coef + 1.96 * se),
@@ -452,7 +541,13 @@ ggplot(coef_by_year, aes(x = year, y = coef)) +
        title = "closure_share coefficient by 3-year windows") +
   theme_minimal()
 
+# ggsave("docs/figures/closure_share_coef.png", plot = g, width = 6, height = 4, dpi = 150)
+g
+
 ```
+
+
+
 ```{r}
 cat("\n=== MAIN REGRESSIONS: HAS_APP / LARGE / RATINGS ===\n")
 
@@ -473,6 +568,24 @@ r_app <- list(
 etable(r_app, order = "closure_share")
 
 ```
+
+
+
+
+```{r}
+cat("\n=== RUNNING MAIN REGRESSIONS ===\n")
+
+r_main <- list(
+  "All"       = feols(..depvar ~ closure_share * sophisticated + closure_share * above_median_age + closure_share * above_median_income + ..controls | ..fixef, data = reg_main,                     vcov = ~ bank_id),
+  "Pre 2012"  = feols(..depvar ~ closure_share * sophisticated + closure_share * above_median_age + closure_share * above_median_income + ..controls | ..fixef, data = reg_main[YEAR < 2012],       vcov = ~ bank_id),
+  "2012-2019" = feols(..depvar ~ closure_share * sophisticated + closure_share * above_median_age + closure_share * above_median_income + ..controls | ..fixef, data = reg_main[YEAR %in% 2012:2019], vcov = ~ bank_id),
+  "2020-2024" = feols(..depvar ~ closure_share * sophisticated + closure_share * above_median_age + closure_share * above_median_income + ..controls | ..fixef, data = reg_main[YEAR >= 2020],      vcov = ~ bank_id)
+)
+
+etable(r_main,order="closure_share")
+
+```
+
 
 ```{r}
 cat("\n=== MAIN REGRESSIONS: VISITS (2020+) ===\n")
@@ -495,34 +608,32 @@ etable(r_visits, order = "closure_share")
 
 ```
 
-```{r}
-reg_main[, period := fcase(
-  YEAR %in% 2012:2019, "2012-2019",
-  YEAR >= 2020,        "2020-2024",
-  default = NA_character_
-)]
 
-desc_stats <- reg_main[!is.na(period), .(
-  N = .N,
-  depvar_mean = round(mean(growth_on_total_t1, na.rm = TRUE), 3),
-  depvar_sd   = round(sd(growth_on_total_t1, na.rm = TRUE), 3),
-  closure_share_mean = round(mean(closure_share, na.rm = TRUE), 3),
-  closure_share_sd   = round(sd(closure_share, na.rm = TRUE), 3)
-), keyby = .(period, any_closure_t)]
-
-setnames(desc_stats, "any_closure_t", "any_closure")
-md_table(desc_stats)
-
-reg_main[, period := NULL]
-
-```
 
 ```{r}
-ggplot(reg_main, aes(x = growth_on_total_t1, fill = factor(any_closure_t))) +
-  geom_density(alpha = 0.5) +
-  labs(x = "Deposit Growth (t-1 to t+1, / total t-1)", y = "Density") +
-  theme_minimal()
+# Helper to extract sunab event-time estimates from a fixest model
+sunab_tidy <- function(model, label) {
+  ct <- as.data.table(coeftable(model), keep.rownames = "term")
+  ct <- ct[grepl("sunab\\(|::", term)]
+  if (nrow(ct) == 0) stop("No sunab terms detected. Check that the model includes sunab(cohort, YEAR, ...).")
 
+  ct[, event_time := as.integer(gsub(".*?(-?\\d+)\\D*$", "\\1", term))]
+  ct[, `:=`(
+    estimate = Estimate,
+    se       = `Std. Error`,
+    period   = label
+  )]
+  ct[, .(period, event_time, estimate, se)]
+}
+
+
+add_ref_point <- function(es_dt, ref = -1L) {
+  refs <- unique(es_dt[, .(period)])
+  refs[, `:=`(event_time = ref, estimate = 0, se = 0)]
+  out <- rbindlist(list(es_dt, refs), fill = TRUE)
+  setorder(out, period, event_time)
+  out
+}
 ```
 
 
@@ -586,36 +697,19 @@ sunab_2020_2024 <- feols(
 # grid.arrange(g1,g2,g3,nrow=1)
 ```
 
+
 ```{r}
 # --- Block 13: Superimposed Sun & Abraham (All Branch Deposits), by period (colored) ---
-
-# Helper to extract sunab event-time estimates from a fixest model
-sunab_tidy <- function(model, label) {
-  ct <- as.data.table(coeftable(model), keep.rownames = "term")
-  ct <- ct[grepl("sunab\\(|::", term)]
-  if (nrow(ct) == 0) stop("No sunab terms detected. Check that the model includes sunab(cohort, YEAR, ...).")
-
-  ct[, event_time := as.integer(gsub(".*?(-?\\d+)\\D*$", "\\1", term))]
-  ct[, `:=`(
-    estimate = Estimate,
-    se       = `Std. Error`,
-    period   = label
-  )]
-  ct[, .(period, event_time, estimate, se)]
-}
-
-
-add_ref_point <- function(es_dt, ref = -1L) {
-  refs <- unique(es_dt[, .(period)])
-  refs[, `:=`(event_time = ref, estimate = 0, se = 0)]
-  out <- rbindlist(list(es_dt, refs), fill = TRUE)
-  setorder(out, period, event_time)
-  out
-}
+es13_all <- rbindlist(list(
+  sunab_tidy(sunab_pre2012, "Pre 2012"),
+  sunab_tidy(sunab_2012_2019, "2012-2019"),
+  sunab_tidy(sunab_2020_2024, "2020-2024")
+))
 
 es13_all <- add_ref_point(es13_all, ref = -1L)
+es13_all <- es13_all[order(period, event_time)]
 
-ggplot(es13_all, aes(x = event_time, y = estimate, group = period, color = period)) +
+g <- ggplot(es13_all, aes(x = event_time, y = estimate, group = period, color = period)) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
   geom_line(linewidth = 0.8) +
   geom_point(aes(shape = period), size = 2.2) +
@@ -638,6 +732,8 @@ ggplot(es13_all, aes(x = event_time, y = estimate, group = period, color = perio
   ) +
   theme_minimal()
 
+ggsave("docs/figures/sunab_total_deposits.png", plot = g, width = 6, height = 4, dpi = 150)
+g
 ```
 
 
@@ -706,57 +802,8 @@ sunab_consistent_2020_2024 <- feols(
   data = reg_sunab_cons[YEAR >= 2020],
   vcov = ~ bank_id
 )
-
-# 
-# g1 <- ggiplot(sunab_consistent_pre2012,
-#         main = "Sun & Abraham (Consistent Set): Pre 2012",
-#         xlab = "Years Relative to First Closure",
-#         ylab = "log(1 + deposits)")
-# 
-# g2 <- ggiplot(sunab_consistent_2012_2019,
-#         main = "Sun & Abraham (Consistent Set): 2012-2019",
-#         xlab = "Years Relative to First Closure",
-#         ylab = "log(1 + deposits)")
-# 
-# g3 <- ggiplot(sunab_consistent_2020_2024,
-#         main = "Sun & Abraham (Consistent Set): 2020-2024",
-#         xlab = "Years Relative to First Closure",
-#         ylab = "log(1 + deposits)")
-# 
-# grid.arrange(g1,g2,g3,nrow=1)
 ```
 ```{r}
-# --- Superimposed event-study plot (robust; no ggplot_build scraping) ---
-
-# Extract event-time estimates from a fixest model with sunab()
-# sunab_tidy <- function(model, label) {
-#   ct <- as.data.table(coeftable(model), keep.rownames = "term")
-#   # Keep only sunab event-time terms; fixest names vary but always include "::" for sunab
-#   ct <- ct[grepl("sunab\\(|::", term)]
-#   if (nrow(ct) == 0) stop("No sunab terms detected. Check that the model includes sunab(cohort, YEAR, ...).")
-# 
-#   # Parse event time from the term name.
-#   # Common patterns include "...::(-3)" or "...::3" etc. We'll grab the last integer in the string.
-#   ct[, event_time := as.integer(gsub(".*?(-?\\d+)\\D*$", "\\1", term))]
-# 
-#   ct[, `:=`(
-#     estimate = Estimate,
-#     se       = `Std. Error`,
-#     period   = label
-#   )]
-# 
-#   ct[, .(period, event_time, estimate, se)]
-# }
-# 
-# add_ref_point <- function(es_dt, ref = -1L) {
-#   refs <- unique(es_dt[, .(period)])
-#   refs[, `:=`(event_time = ref, estimate = 0, se = 0)]
-#   out <- rbindlist(list(es_dt, refs), fill = TRUE)
-#   setorder(out, period, event_time)
-#   out
-# }
-
-
 es_all <- rbindlist(list(
   sunab_tidy(sunab_consistent_pre2012,  "Pre 2012"),
   sunab_tidy(sunab_consistent_2012_2019,"2012-2019"),
@@ -769,7 +816,7 @@ es_all <- add_ref_point(es_all, ref = -1L)
 # es_all <- es_all[event_time != -1]
 
 # Same superimposed plot, but with explicit colors
-ggplot(es_all, aes(x = event_time, y = estimate, group = period, color = period)) +
+g <- ggplot(es_all, aes(x = event_time, y = estimate, group = period, color = period)) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
   geom_line(linewidth = 0.8) +
   geom_point(aes(shape = period), size = 2.2) +
@@ -792,6 +839,8 @@ ggplot(es_all, aes(x = event_time, y = estimate, group = period, color = period)
   ) +
   theme_minimal()
 
+ggsave("docs/figures/sunab_deposits_of_survivors.png", plot = g, width = 6, height = 4, dpi = 150)
+g
 
 ```
 
@@ -828,9 +877,12 @@ sunab_model <- feols(
   vcov = ~ bank_id
 )
 
-ggiplot(sunab_model,
+g <- ggiplot(sunab_model,
         main = "Sun & Abraham: Event Study (sampled never-treated controls)",
         xlab = "Years Relative to First Closure",
         ylab = "log(1 + remaining branches)")
 
+
+ggsave("docs/figures/sunab_n_remaining_branches.png", plot = g, width = 6, height = 4, dpi = 150)
+g
 ```
