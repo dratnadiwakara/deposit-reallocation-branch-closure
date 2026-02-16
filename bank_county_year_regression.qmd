@@ -47,6 +47,7 @@ library(fixest)
 library(ggplot2)
 library(DescTools)
 library(lubridate)
+library(ggfixest)
 # -------------------------
 # Inputs (edit paths)
 # -------------------------
@@ -583,67 +584,8 @@ ggplot(reg_main, aes(x = growth_on_total_t1, fill = factor(any_closure_t))) +
 
 
 
-```{r}
-cat("\n=== SUN & ABRAHAM: TOTAL DEPOSITS (ALL BRANCHES) ===\n")
 
-# Step 0: Create total deposits variable at bank-county-year level
-bank_cty_yr_total <- closure_app[, .(
-  total_deps_all_branches = sum(DEPSUMBR, na.rm = TRUE),
-  n_branches_all = .N
-), by = .(bank_id, county, YEAR)]
 
-# Step 1: Identify first closure year for treated bank-counties
-first_closure <- bank_cty_yr[
-  any_closure_t == 1,
-  .(cohort = min(YEAR)),
-  by = .(bank_id, county)
-]
-
-# Step 2: Start with total deposits data and add cohort
-reg_sunab <- merge(
-  bank_cty_yr_total,
-  first_closure,
-  by = c("bank_id", "county"),
-  all.x = TRUE
-)
-
-# Step 3: Sample never-treated bank-counties (20% sample to save memory)
-set.seed(123)
-never_treated_bc <- unique(reg_sunab[is.na(cohort), .(bank_id, county)])
-sampled_never_treated <- never_treated_bc[sample(.N, max(1, .N * 0.5))]
-
-# Step 4: Filter dataset
-reg_sunab <- reg_sunab[
-  # Treated in ±3 window
-  (!is.na(cohort) & YEAR >= cohort - 3 & YEAR <= cohort + 3) |
-  # OR sampled never-treated (all years)
-  (is.na(cohort) & paste(bank_id, county) %in% paste(sampled_never_treated$bank_id, sampled_never_treated$county))
-]
-
-# Step 5: Set cohort = 10000 for never-treated
-reg_sunab[is.na(cohort), cohort := 10000]
-
-# Step 6: Create unit ID
-reg_sunab[, unit_id := .GRP, by = .(bank_id, county)]
-
-# Step 7: Run sunab with total deposits
-sunab_model <- feols(
-  log1p(total_deps_all_branches) ~ sunab(cohort, YEAR, ref.p = -1) | 
-    unit_id + YEAR,
-  data = reg_sunab,
-  vcov = ~ bank_id
-)
-
-# Step 8: Plot
-ggiplot(sunab_model, 
-      main = "Sun & Abraham: Total Deposits (All Branches)",
-      xlab = "Years Relative to First Closure",
-      ylab = "Log Deposits (All Branches)")
-
-# Step 9: Summary
-etable(sunab_model)
-
-```
 ```{r}
 cat("\n=== SUN & ABRAHAM: BY TIME PERIOD ===\n")
 
@@ -707,9 +649,406 @@ sunab_2020_2024 <- feols(
   vcov = ~ bank_id
 )
 
-etable(sunab_pre2012,sunab_2012_2019,sunab_2020_2024)
+# etable(sunab_pre2012,sunab_2012_2019,sunab_2020_2024)
+
+ggiplot(sunab_pre2012,
+        main = "Sun & Abraham: Pre 2012",
+        xlab = "Years Relative to First Closure",
+        ylab = "Log Deposits (All Branches)")
+
+ggiplot(sunab_2012_2019,
+        main = "Sun & Abraham: 2012-2019",
+        xlab = "Years Relative to First Closure",
+        ylab = "Log Deposits (All Branches)")
+
+ggiplot(sunab_2020_2024,
+        main = "Sun & Abraham: 2020-2024",
+        xlab = "Years Relative to First Closure",
+        ylab = "Log Deposits (All Branches)")
 
 ```
+
+
+```{r}
+cat("\n=== SUN & ABRAHAM: CONSISTENT BRANCH SET ===\n")
+
+# Step 1: Identify first closure year for treated bank-counties
+first_closure <- bank_cty_yr[
+  any_closure_t == 1,
+  .(cohort = min(YEAR)),
+  by = .(bank_id, county)
+]
+
+# Step 2: Identify which branches to EXCLUDE (closed branches)
+# For each bank-county, find branches that close at cohort year
+closed_branches <- closure_app[, .(
+  bank_id, 
+  county, 
+  YEAR, 
+  UNINUMBR, 
+  is_closed = closed == 1L,
+  DEPSUMBR
+)]
+
+# Add cohort to identify when closures happen
+closed_branches <- merge(
+  closed_branches,
+  first_closure,
+  by = c("bank_id", "county"),
+  all.x = TRUE
+)
+
+# Flag branches that close at cohort year
+closed_branches[, closes_at_cohort := is_closed & YEAR == cohort]
+
+# Get list of branch IDs that close at cohort
+branches_to_exclude <- closed_branches[
+  closes_at_cohort == TRUE, 
+  .(UNINUMBR, bank_id, county)
+]
+
+cat("Branches that close at cohort year:", nrow(branches_to_exclude), "\n")
+
+# Step 3: Create deposits EXCLUDING branches that will close
+# This gives us a consistent set of branches across the entire window
+bank_cty_yr_consistent <- closure_app[
+  # Exclude branches that close at cohort year
+  !UNINUMBR %in% branches_to_exclude$UNINUMBR
+][, .(
+  deps_consistent = sum(DEPSUMBR, na.rm = TRUE),
+  n_branches_consistent = .N
+), by = .(bank_id, county, YEAR)]
+
+cat("Created consistent deposit series\n")
+
+# Step 4: Merge with cohort info
+reg_sunab <- merge(
+  bank_cty_yr_consistent,
+  first_closure,
+  by = c("bank_id", "county"),
+  all.x = TRUE
+)
+
+# Step 5: Sample never-treated bank-counties
+set.seed(123)
+never_treated_bc <- unique(reg_sunab[is.na(cohort), .(bank_id, county)])
+sampled_never_treated <- never_treated_bc[sample(.N, max(1, .N * 0.25))]
+
+# Step 6: Filter dataset
+reg_sunab <- reg_sunab[
+  # Treated in ±3 window
+  (!is.na(cohort) & YEAR >= cohort - 3 & YEAR <= cohort + 3) |
+  # OR sampled never-treated (all years)
+  (is.na(cohort) & paste(bank_id, county) %in% paste(sampled_never_treated$bank_id, sampled_never_treated$county))
+]
+
+# Step 7: Set cohort = 10000 for never-treated
+reg_sunab[is.na(cohort), cohort := 10000]
+
+# Step 8: Create unit ID
+reg_sunab[, unit_id := .GRP, by = .(bank_id, county)]
+
+# Step 9: Run sunab with consistent branch set for each period
+sunab_consistent_pre2012 <- feols(
+  log1p(deps_consistent) ~ sunab(cohort, YEAR, ref.p = -1) | 
+    unit_id + YEAR,
+  data = reg_sunab[YEAR < 2012],
+  vcov = ~ bank_id
+)
+
+sunab_consistent_2012_2019 <- feols(
+  log1p(deps_consistent) ~ sunab(cohort, YEAR, ref.p = -1) | 
+    unit_id + YEAR,
+  data = reg_sunab[YEAR >= 2012 & YEAR <= 2019],
+  vcov = ~ bank_id
+)
+
+sunab_consistent_2020_2024 <- feols(
+  log1p(deps_consistent) ~ sunab(cohort, YEAR, ref.p = -1) | 
+    unit_id + YEAR,
+  data = reg_sunab[YEAR >= 2020],
+  vcov = ~ bank_id
+)
+
+etable(sunab_consistent_pre2012, sunab_consistent_2012_2019, sunab_consistent_2020_2024)
+
+# Step 10: Plots by period
+ggiplot(sunab_consistent_pre2012,
+        main = "Sun & Abraham (Consistent Branch Set): Pre 2012",
+        xlab = "Years Relative to First Closure",
+        ylab = "Log Deposits (Surviving Branches)")
+
+ggiplot(sunab_consistent_2012_2019,
+        main = "Sun & Abraham (Consistent Branch Set): 2012-2019",
+        xlab = "Years Relative to First Closure",
+        ylab = "Log Deposits (Surviving Branches)")
+
+ggiplot(sunab_consistent_2020_2024,
+        main = "Sun & Abraham (Consistent Branch Set): 2020-2024",
+        xlab = "Years Relative to First Closure",
+        ylab = "Log Deposits (Surviving Branches)")
+
+```
+
+
+```{r}
+cat("\n=== SUN & ABRAHAM: MEMORY-EFFICIENT VERSION (FIXED) ===\n")
+
+# Step 1: Identify first closure year for treated bank-counties
+first_closure <- bank_cty_yr[
+  any_closure_t == 1,
+  .(cohort = min(YEAR)),
+  by = .(bank_id, county)
+]
+
+# Step 2: Add cohort to reg_base
+reg_base[, cohort := NULL]  # Remove if exists
+reg_base <- merge(
+  reg_base,
+  first_closure,
+  by = c("bank_id", "county"),
+  all.x = TRUE
+)
+
+# Step 3: Sample never-treated bank-counties
+set.seed(123)
+never_treated_bc <- unique(reg_base[is.na(cohort), .(bank_id, county)])
+sampled_never_treated <- never_treated_bc[sample(.N, max(1, .N * 0.25))]
+
+# Step 4: Filter dataset
+reg_sunab <- reg_base[
+  # Treated in ±3 window
+  (!is.na(cohort) & YEAR >= cohort - 3 & YEAR <= cohort + 3) |
+  # OR sampled never-treated (all years)
+  (is.na(cohort) & paste(bank_id, county) %in% paste(sampled_never_treated$bank_id, sampled_never_treated$county))
+]
+
+reg_sunab[, unit_id := .GRP, by = .(bank_id, county)]
+
+# Step 5: Set cohort = 10000 for never-treated
+reg_sunab[is.na(cohort), cohort := 10000]
+
+# Step 6: Run sunab
+sunab_model <- feols(
+  log1p(n_remaining_branches) ~ sunab(cohort, YEAR, ref.p = -1) | 
+    bank_id^county + YEAR,
+  data = reg_sunab,
+  vcov = ~ bank_id
+)
+
+# Step 7: Plot
+ggiplot(sunab_model, 
+      main = "Sun & Abraham: With Sampled Never-Treated Controls")
+```
+
+
+
+
+
+--- ignore
+
+```{r}
+cat("\n=== SUN & ABRAHAM: TOTAL DEPOSITS (ALL BRANCHES) ===\n")
+
+# Step 0: Create total deposits variable at bank-county-year level
+bank_cty_yr_total <- closure_app[, .(
+  total_deps_all_branches = sum(DEPSUMBR, na.rm = TRUE),
+  n_branches_all = .N
+), by = .(bank_id, county, YEAR)]
+
+# Step 1: Identify first closure year for treated bank-counties
+first_closure <- bank_cty_yr[
+  any_closure_t == 1,
+  .(cohort = min(YEAR)),
+  by = .(bank_id, county)
+]
+
+# Step 2: Start with total deposits data and add cohort
+reg_sunab <- merge(
+  bank_cty_yr_total,
+  first_closure,
+  by = c("bank_id", "county"),
+  all.x = TRUE
+)
+
+# Step 3: Sample never-treated bank-counties (20% sample to save memory)
+set.seed(123)
+never_treated_bc <- unique(reg_sunab[is.na(cohort), .(bank_id, county)])
+sampled_never_treated <- never_treated_bc[sample(.N, max(1, .N * 0.5))]
+
+# Step 4: Filter dataset
+reg_sunab <- reg_sunab[
+  # Treated in ±3 window
+  (!is.na(cohort) & YEAR >= cohort - 3 & YEAR <= cohort + 3) |
+  # OR sampled never-treated (all years)
+  (is.na(cohort) & paste(bank_id, county) %in% paste(sampled_never_treated$bank_id, sampled_never_treated$county))
+]
+
+# Step 5: Set cohort = 10000 for never-treated
+reg_sunab[is.na(cohort), cohort := 10000]
+
+# Step 6: Create unit ID
+reg_sunab[, unit_id := .GRP, by = .(bank_id, county)]
+
+# Step 7: Run sunab with total deposits
+sunab_model <- feols(
+  log1p(total_deps_all_branches) ~ sunab(cohort, YEAR, ref.p = -1) | 
+    unit_id + YEAR,
+  data = reg_sunab,
+  vcov = ~ bank_id
+)
+
+# Step 8: Plot
+ggiplot(sunab_model, 
+      main = "Sun & Abraham: Total Deposits (All Branches)",
+      xlab = "Years Relative to First Closure",
+      ylab = "Log Deposits (All Branches)")
+
+# Step 9: Summary
+etable(sunab_model)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+cat("\n=== SUN & ABRAHAM: CLEAN NETWORK CHANGES ONLY ===\n")
+
+# Step 0: Create total deposits variable at bank-county-year level
+bank_cty_yr_total <- closure_app[, .(
+  total_deps_all_branches = sum(DEPSUMBR, na.rm = TRUE),
+  n_branches_all = .N
+), by = .(bank_id, county, YEAR)]
+
+# Step 1: Identify first closure year for treated bank-counties
+first_closure <- bank_cty_yr[
+  any_closure_t == 1,
+  .(cohort = min(YEAR)),
+  by = .(bank_id, county)
+]
+
+# Step 2: Start with total deposits data and add cohort
+reg_sunab <- merge(
+  bank_cty_yr_total,
+  first_closure,
+  by = c("bank_id", "county"),
+  all.x = TRUE
+)
+
+# Step 3: Calculate branch changes for each bank-county-year
+setorder(reg_sunab, bank_id, county, YEAR)
+reg_sunab[, n_branches_lag := shift(n_branches_all, 1, type = "lag"), by = .(bank_id, county)]
+reg_sunab[, branch_change := n_branches_all - n_branches_lag]
+
+# Step 4: For each bank-county, enforce clean branch-count patterns in [-3, 3]
+reg_sunab[, event_time := fifelse(is.na(cohort), -1000, YEAR - cohort)]
+
+# Treated: stable in pre (-3:-1), stable in post (1:3), and only break at t=0
+clean_treated <- reg_sunab[
+  !is.na(cohort) & event_time >= -3 & event_time <= 3
+][, .(
+  has_all_event_times = all((-3):3 %in% event_time),
+  pre_stable = uniqueN(n_branches_all[event_time %in% -3:-1]) == 1,
+  post_stable = uniqueN(n_branches_all[event_time %in% 1:3]) == 1,
+  t0_diff_from_pre = n_branches_all[event_time == 0][1] != n_branches_all[event_time == -1][1],
+  t0_equals_t1 = n_branches_all[event_time == 0][1] == n_branches_all[event_time == 1][1]
+), by = .(bank_id, county)]
+
+# Keep only treated units where the only branch-count break is at t=0
+clean_treated <- clean_treated[
+  has_all_event_times & pre_stable & post_stable & t0_diff_from_pre & t0_equals_t1
+][, .(bank_id, county)]
+
+cat("Treated units with clean network changes:", nrow(clean_treated), "\n")
+
+# Never-treated controls: for each observation, require constant branch count in [t-3, t+3]
+reg_sunab[is.na(cohort), control_window_ok := {
+  out <- rep(FALSE, .N)
+  yrs <- YEAR
+  nbr <- n_branches_all
+  for (i in seq_len(.N)) {
+    req_yrs <- (yrs[i] - 3):(yrs[i] + 3)
+    idx <- match(req_yrs, yrs)
+    if (all(!is.na(idx))) {
+      out[i] <- uniqueN(nbr[idx]) == 1
+    }
+  }
+  out
+}, by = .(bank_id, county)]
+
+clean_never_treated <- unique(reg_sunab[
+  is.na(cohort) & control_window_ok == TRUE,
+  .(bank_id, county)
+])
+
+cat("Never-treated units with no branch changes:", nrow(clean_never_treated), "\n")
+
+# Step 5: Sample from clean never-treated (50% to save memory)
+set.seed(123)
+sampled_never_treated <- clean_never_treated[sample(.N, max(1, .N * 0.5))]
+
+cat("Sampled never-treated:", nrow(sampled_never_treated), "\n")
+
+# Step 6: Filter to clean units only
+reg_sunab_clean <- reg_sunab[
+  # Clean treated in ±3 window
+  (paste(bank_id, county) %in% paste(clean_treated$bank_id, clean_treated$county) & 
+   event_time >= -3 & event_time <= 3) |
+  # OR sampled clean never-treated observations with stable [-3, +3] branch counts
+  (paste(bank_id, county) %in% paste(sampled_never_treated$bank_id, sampled_never_treated$county) &
+     control_window_ok == TRUE)
+]
+
+# Step 7: Set cohort = 10000 for never-treated
+reg_sunab_clean[is.na(cohort), cohort := 10000]
+
+# Step 8: Create unit ID
+reg_sunab_clean[, unit_id := .GRP, by = .(bank_id, county)]
+
+# Step 9: Run sunab with total deposits
+sunab_model_clean <- feols(
+  log1p(total_deps_all_branches) ~ sunab(cohort, YEAR, ref.p = -1) | 
+    unit_id + YEAR,
+  data = reg_sunab_clean,
+  vcov = ~ bank_id
+)
+
+# Step 10: Plot
+ggiplot(sunab_model_clean, 
+      main = "Sun & Abraham: Clean Network Changes Only",
+      xlab = "Years Relative to First Closure",
+      ylab = "Log Deposits (All Branches)")
+
+# Step 11: Summary
+etable(sunab_model_clean)
+
+cat("\nFinal sample size:", nrow(reg_sunab_clean), "\n")
+cat("  - Clean treated:", sum(reg_sunab_clean$cohort != 10000), "\n")
+cat("  - Clean never-treated:", sum(reg_sunab_clean$cohort == 10000), "\n")
+```
+
+
+
 
 ```{r}
 cat("\n=== SUN & ABRAHAM: DOSE-RESPONSE WITH CLOSURE_SHARE ===\n")
